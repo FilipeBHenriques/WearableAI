@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+
+# Whisper model cache
+~/.cache/huggingface/
+~/.cache/whisper/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Audio recordings
+*.wav
+*.mp3
+*.flac
+
+# Kivy
+.kivy/
+*.kv~
+
+# Node / frontend
+mvp/frontend/node_modules/
+mvp/frontend/dist/
+mvp/frontend/.vite/
+
+# IDE
+.idea/
+.vscode/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.local

@@ -1,0 +1,7 @@
+faster-whisper
+sounddevice
+scipy
+numpy
+fastapi
+uvicorn[standard]
+python-multipart
