@@ -10,18 +10,19 @@ import tempfile
 import numpy as np
 import scipy.io.wavfile as wavfile
 import sounddevice as sd
-from faster_whisper import WhisperModel
 
 SAMPLE_RATE = 16_000
 
-_model: WhisperModel | None = None
+_model = None
 _frames: list[np.ndarray] = []
 _stream: sd.InputStream | None = None
 
 
-def _get_model() -> WhisperModel:
+def _get_model():
     global _model
     if _model is None:
+        from faster_whisper import WhisperModel
+
         _model = WhisperModel("base", device="cpu", compute_type="int8")
     return _model
 

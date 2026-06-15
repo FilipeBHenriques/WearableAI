@@ -1,14 +1,12 @@
-import os
 import sqlite3
 from datetime import datetime
 
 from models import Note
-
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data.db")
+from paths import DB_PATH
 
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.execute("""
         CREATE TABLE IF NOT EXISTS notes (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,18 +19,28 @@ def init_db():
     conn.close()
 
 
-def save_note(text: str, category: str) -> None:
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
+def save_note(text: str, category: str) -> tuple[int, str]:
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    conn = sqlite3.connect(str(DB_PATH))
+    cur = conn.execute(
         "INSERT INTO notes (text, category, created_at) VALUES (?, ?, ?)",
-        (text, category, datetime.now().strftime("%Y-%m-%d %H:%M")),
+        (text, category, created_at),
     )
+    note_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return note_id, created_at
+
+
+def update_note_category(note_id: int, category: str) -> None:
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute("UPDATE notes SET category = ? WHERE id = ?", (category, note_id))
     conn.commit()
     conn.close()
 
 
 def get_all_notes() -> list[Note]:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(str(DB_PATH))
     rows = conn.execute(
         "SELECT id, text, category, created_at FROM notes ORDER BY id DESC"
     ).fetchall()
@@ -41,7 +49,7 @@ def get_all_notes() -> list[Note]:
 
 
 def get_note_by_id(note_id: int) -> Note | None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(str(DB_PATH))
     row = conn.execute(
         "SELECT id, text, category, created_at FROM notes WHERE id = ?", (note_id,)
     ).fetchone()
@@ -52,7 +60,7 @@ def get_note_by_id(note_id: int) -> Note | None:
 
 
 def delete_note(note_id: int) -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
     conn.commit()
     conn.close()

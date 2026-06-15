@@ -1,31 +1,30 @@
-import { useEffect, useState } from "react";
-import { deleteNote, fetchNotes } from "../api/notesApi";
+import { useCallback } from "react";
+import { categorizeNote, deleteNote } from "../api/notesApi";
 import { RecordButton } from "../components/RecordButton";
 import { NotesList } from "../components/NotesList";
+import { useNotes } from "../hooks/useNotes";
 import { useRecording } from "../hooks/useRecording";
-import type { Note } from "../types/note";
+import type { RecordResult } from "../types/note";
 
 export function HomePage() {
-  const [notes, setNotes] = useState<Note[]>([]);
+  const { notes, reload } = useNotes();
 
-  async function loadNotes() {
-    const data = await fetchNotes();
-    setNotes(data);
-  }
+  const handleStopped = useCallback(
+    async (result: RecordResult) => {
+      if (!result.saved || result.id == null) return;
 
-  useEffect(() => {
-    loadNotes();
-  }, []);
+      await reload();
 
-  const { state, handleStart, handleStop } = useRecording(async (result) => {
-    if (result.saved) {
-      await loadNotes();
-    }
-  });
+      void categorizeNote(result.id).then(() => reload());
+    },
+    [reload],
+  );
+
+  const { state, handleStart, handleStop } = useRecording(handleStopped);
 
   async function handleDelete(id: number) {
     await deleteNote(id);
-    await loadNotes();
+    await reload();
   }
 
   return (

@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "start": "concurrently -n backend,frontend -c blue,green \"python ../backend/main.py\" \"vite\""
+    "start": "concurrently -k -n backend,frontend -c blue,green \"cd ../backend && python main.py\" \"vite\""
   },
   "dependencies": {
     "react": "^18.3.1",

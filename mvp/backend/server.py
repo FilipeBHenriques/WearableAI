@@ -5,19 +5,26 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db
+from paths import ASSETS_DIR, DIST_DIR
 from schemas import TextInput
-from services import capture_service, note_service, recording_service
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DIST_DIR = os.path.join(BASE_DIR, "..", "frontend", "dist")
+from services import capture_service, note_service, organizer_service, recording_service
 
 app = FastAPI()
 init_db()
 
-if os.path.isdir(DIST_DIR):
+
+@app.on_event("startup")
+def log_paths() -> None:
+    print(f"[backend] cwd={os.getcwd()}")
+    print(f"[backend] dist={DIST_DIR} (exists={DIST_DIR.is_dir()})")
+    if ASSETS_DIR.is_dir():
+        print(f"[backend] serving /assets from {ASSETS_DIR}")
+
+
+if ASSETS_DIR.is_dir():
     app.mount(
         "/assets",
-        StaticFiles(directory=os.path.join(DIST_DIR, "assets")),
+        StaticFiles(directory=str(ASSETS_DIR)),
         name="assets",
     )
 
@@ -26,10 +33,9 @@ if os.path.isdir(DIST_DIR):
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    dist_index = os.path.join(DIST_DIR, "index.html")
-    if os.path.exists(dist_index):
-        with open(dist_index, encoding="utf-8") as f:
-            return f.read()
+    dist_index = DIST_DIR / "index.html"
+    if dist_index.is_file():
+        return dist_index.read_text(encoding="utf-8")
     return HTMLResponse(
         "<h2>Run <code>cd frontend && npm run build</code> to serve the UI.</h2>"
     )
@@ -60,6 +66,14 @@ def api_delete_note(note_id: int):
     return {"deleted": note_id}
 
 
+@app.post("/api/notes/{note_id}/categorize")
+def api_categorize_note(note_id: int):
+    result = organizer_service.categorize(note_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return result
+
+
 # ── Recording ──────────────────────────────────────────────────────────────────
 
 @app.post("/api/record/start")
@@ -84,8 +98,10 @@ def api_text(body: TextInput):
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 def spa_fallback(full_path: str):
-    dist_index = os.path.join(DIST_DIR, "index.html")
-    if os.path.exists(dist_index):
-        with open(dist_index, encoding="utf-8") as f:
-            return f.read()
+    if full_path.startswith("api/") or full_path == "api":
+        raise HTTPException(status_code=404, detail="Not found")
+
+    dist_index = DIST_DIR / "index.html"
+    if dist_index.is_file():
+        return dist_index.read_text(encoding="utf-8")
     return HTMLResponse("<h2>Run <code>cd frontend && npm run build</code> first.</h2>")

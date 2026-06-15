@@ -136,9 +136,10 @@ body {
   text-transform: uppercase;
 }
 
-.cat-idea     { color: var(--idea); }
-.cat-task     { color: var(--task); }
-.cat-reminder { color: var(--reminder); }
+.cat-idea          { color: var(--idea); }
+.cat-task          { color: var(--task); }
+.cat-reminder      { color: var(--reminder); }
+.cat-uncategorized { color: var(--muted); }
 
 .note-text {
   font-size: 14px;

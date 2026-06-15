@@ -1,32 +1,41 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { startRecording, stopRecording } from "../api/notesApi";
 import type { RecordResult } from "../types/note";
 
 export type RecordState = "idle" | "recording" | "processing";
 
-export function useRecording(onResult: (result: RecordResult) => void) {
+export function useRecording(
+  onStopped: (result: RecordResult) => void | Promise<void>,
+) {
   const [state, setState] = useState<RecordState>("idle");
+  const stateRef = useRef<RecordState>("idle");
+
+  function setRecordState(next: RecordState) {
+    stateRef.current = next;
+    setState(next);
+  }
 
   async function handleStart() {
-    if (state !== "idle") return;
-    setState("recording");
+    if (stateRef.current !== "idle") return;
+    setRecordState("recording");
     try {
       await startRecording();
     } catch {
-      setState("idle");
+      setRecordState("idle");
     }
   }
 
   async function handleStop() {
-    if (state !== "recording") return;
-    setState("processing");
+    if (stateRef.current !== "recording") return;
+    setRecordState("processing");
+
     try {
       const result = await stopRecording();
-      onResult(result);
+      await onStopped(result);
     } catch {
-      onResult({ text: "", category: null, saved: false });
+      // stop failed
     } finally {
-      setState("idle");
+      setRecordState("idle");
     }
   }
 
