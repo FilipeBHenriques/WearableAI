@@ -5,14 +5,27 @@ When the storage layer changes (e.g. adding projects or embeddings),
 only this file and database.py need to change.
 """
 
-from database import delete_note, get_all_notes, get_note_by_id, save_note, update_note_category
+from database import (
+    delete_notes,
+    get_child_notes,
+    get_all_notes_flat,
+    get_note_by_id,
+    get_root_notes,
+    save_note,
+    update_note_category,
+    update_note_parent,
+)
 from models import Note
 
 PENDING_CATEGORY = "Uncategorized"
 
 
 def get_all() -> list[Note]:
-    return get_all_notes()
+    return get_root_notes()
+
+
+def get_subnotes(note_id: int) -> list[Note]:
+    return get_child_notes(note_id)
 
 
 def save(text: str, category: str = PENDING_CATEGORY) -> tuple[int, str]:
@@ -23,9 +36,53 @@ def update_category(note_id: int, category: str) -> None:
     update_note_category(note_id, category)
 
 
+def update_parent(note_id: int, parent_note_id: int | None) -> None:
+    update_note_parent(note_id, parent_note_id)
+
+
+def get_random_parent_candidate(exclude_note_id: int) -> Note | None:
+    notes = get_all_notes_flat()
+    children_by_parent: dict[int, list[int]] = {}
+    for note in notes:
+        if note.parent_note_id is None:
+            continue
+        children_by_parent.setdefault(note.parent_note_id, []).append(note.id)
+
+    excluded_ids = {exclude_note_id}
+    pending = [exclude_note_id]
+    while pending:
+        current = pending.pop()
+        for child_id in children_by_parent.get(current, []):
+            if child_id in excluded_ids:
+                continue
+            excluded_ids.add(child_id)
+            pending.append(child_id)
+
+    candidates = [note for note in notes if note.id not in excluded_ids]
+    if not candidates:
+        return None
+
+    import random
+
+    return random.choice(candidates)
+
+
 def get_by_id(note_id: int) -> Note | None:
     return get_note_by_id(note_id)
 
 
 def delete(note_id: int) -> None:
-    delete_note(note_id)
+    children_by_parent: dict[int, list[int]] = {}
+    for note in get_all_notes_flat():
+        if note.parent_note_id is None:
+            continue
+        children_by_parent.setdefault(note.parent_note_id, []).append(note.id)
+
+    pending = [note_id]
+    to_delete: list[int] = []
+    while pending:
+        current = pending.pop()
+        to_delete.append(current)
+        pending.extend(children_by_parent.get(current, []))
+
+    delete_notes(to_delete)

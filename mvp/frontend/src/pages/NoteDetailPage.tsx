@@ -25,7 +25,7 @@ export function NoteDetailPage() {
   if (notFound) {
     return (
       <div className="page">
-        <button className="back-btn" onClick={() => navigate("/")}>← Back</button>
+        <button className="back-btn" onClick={() => navigate("/")}>Back</button>
         <p className="muted">Note not found.</p>
       </div>
     );
@@ -34,7 +34,7 @@ export function NoteDetailPage() {
   if (!note) {
     return (
       <div className="page">
-        <p className="muted">Loading…</p>
+        <p className="muted">Loading...</p>
       </div>
     );
   }
@@ -42,7 +42,7 @@ export function NoteDetailPage() {
   return (
     <div className="page">
       <div className="detail-header">
-        <button className="back-btn" onClick={() => navigate(-1)}>← Back</button>
+        <button className="back-btn" onClick={() => navigate(-1)}>Back</button>
         <button className="delete-btn" onClick={handleDelete}>Delete</button>
       </div>
 
@@ -51,8 +51,30 @@ export function NoteDetailPage() {
       </span>
 
       <p className="detail-text">{note.text}</p>
-
       <span className="note-date">{note.created_at}</span>
+
+      <section className="subnotes-section">
+        <div className="subnotes-header">
+          <h2 className="section-title">Subnotes</h2>
+          <span className="muted">{note.subnotes?.length ?? 0}</span>
+        </div>
+
+        {!note.subnotes || note.subnotes.length === 0 ? (
+          <p className="empty">No subnotes yet.</p>
+        ) : (
+          <div className="notes-list">
+            {note.subnotes.map((subnote) => (
+              <div key={subnote.id} className="note-card note-card--subnote">
+                <span className={`note-category cat-${subnote.category.toLowerCase()}`}>
+                  {subnote.category}
+                </span>
+                <p className="note-text">{subnote.text}</p>
+                <span className="note-date">{subnote.created_at}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

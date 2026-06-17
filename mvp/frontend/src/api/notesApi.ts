@@ -13,8 +13,8 @@ export const startRecording = () =>
 export const stopRecording = () =>
   post<RecordResult>("/api/record/stop");
 
-export const categorizeNote = (id: number) =>
-  post<CategorizeResult>(`/api/notes/${id}/categorize`);
+export const categorizeNote = (id: number, is_subnote = false) =>
+  post<CategorizeResult>(`/api/notes/${id}/categorize`, { is_subnote });
 
 export const submitText = (text: string) =>
   post<RecordResult>("/api/text", { text });

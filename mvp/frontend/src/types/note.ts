@@ -3,6 +3,8 @@ export interface Note {
   text: string;
   category: string;
   created_at: string;
+  parent_note_id: number | null;
+  subnotes?: Note[];
 }
 
 export interface RecordResult {
@@ -16,4 +18,5 @@ export interface RecordResult {
 export interface CategorizeResult {
   id: number;
   category: string;
+  parent_note_id: number | null;
 }

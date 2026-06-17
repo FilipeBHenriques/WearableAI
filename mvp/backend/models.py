@@ -7,3 +7,4 @@ class Note:
     text: str
     category: str
     created_at: str
+    parent_note_id: int | None = None

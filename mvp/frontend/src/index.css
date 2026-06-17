@@ -78,6 +78,22 @@ body {
   cursor: default;
 }
 
+.secondary-btn {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+
+.secondary-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 /* ── Transcript card ─────────────────────────────────────────────────────── */
 
 .transcript-card {
@@ -104,6 +120,22 @@ body {
   gap: 6px;
 }
 
+.note-card-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.note-card-shell[data-depth="1"] > .note-card {
+  background: #181c24;
+}
+
+.note-card-shell[data-depth="2"] > .note-card,
+.note-card-shell[data-depth="3"] > .note-card,
+.note-card-shell[data-depth="4"] > .note-card {
+  background: #16181d;
+}
+
 .empty {
   color: var(--muted);
   font-size: 14px;
@@ -121,6 +153,33 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.note-card--subnote {
+  border-left: 3px solid var(--task);
+}
+
+.subnotes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 14px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.subnotes-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-left: 14px;
+}
+
+.subnotes-branch__label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .note-card__header {
@@ -185,6 +244,17 @@ body {
   color: #fff;
 }
 
+.subnotes-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--task);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding-top: 2px;
+}
+
 /* ── Detail page ─────────────────────────────────────────────────────────── */
 
 .detail-header {
@@ -217,4 +287,21 @@ body {
 .muted {
   color: var(--muted);
   font-size: 14px;
+}
+
+.subnotes-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.subnotes-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 700;
 }

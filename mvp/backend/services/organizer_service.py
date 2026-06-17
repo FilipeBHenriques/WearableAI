@@ -33,12 +33,22 @@ def _classify(text: str) -> str:
     return categories[int(np.argmax(similarities))]
 
 
-def categorize(note_id: int) -> CategorizeResult | None:
+def categorize(note_id: int, is_subnote: bool = False) -> CategorizeResult | None:
     """Classify a saved note and persist its category."""
     note = note_service.get_by_id(note_id)
     if note is None:
         return None
 
+    if is_subnote and note.parent_note_id is None:
+        parent = note_service.get_random_parent_candidate(note_id)
+        if parent is not None:
+            note_service.update_parent(note_id, parent.id)
+            note.parent_note_id = parent.id
+
     category = _classify(note.text).capitalize()
     note_service.update_category(note_id, category)
-    return CategorizeResult(id=note_id, category=category)
+    return CategorizeResult(
+        id=note_id,
+        category=category,
+        parent_note_id=note.parent_note_id,
+    )

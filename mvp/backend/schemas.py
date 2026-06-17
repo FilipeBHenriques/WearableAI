@@ -13,6 +13,23 @@ class CaptureResult(BaseModel):
     saved: bool
 
 
+class CategorizeInput(BaseModel):
+    is_subnote: bool = False
+
+
 class CategorizeResult(BaseModel):
     id: int
     category: str
+    parent_note_id: int | None = None
+
+
+class NoteResponse(BaseModel):
+    id: int
+    text: str
+    category: str
+    created_at: str
+    parent_note_id: int | None = None
+
+
+class NoteDetailResponse(NoteResponse):
+    subnotes: list[NoteResponse] = []

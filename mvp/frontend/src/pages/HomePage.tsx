@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { categorizeNote, deleteNote } from "../api/notesApi";
+import { categorizeNote, deleteNote, submitText } from "../api/notesApi";
 import { RecordButton } from "../components/RecordButton";
 import { NotesList } from "../components/NotesList";
 import { useNotes } from "../hooks/useNotes";
@@ -27,9 +27,27 @@ export function HomePage() {
     await reload();
   }
 
+  async function handleAddRandomSubnote() {
+    if (notes.length === 0) return;
+
+    const result = await submitText("Quick random subnote");
+
+    if (!result.saved || result.id == null) return;
+
+    await categorizeNote(result.id, true);
+    await reload();
+  }
+
   return (
     <div className="page">
       <RecordButton state={state} onStart={handleStart} onStop={handleStop} />
+      <button
+        className="secondary-btn"
+        onClick={handleAddRandomSubnote}
+        disabled={notes.length === 0}
+      >
+        Add Random Subnote
+      </button>
       <NotesList notes={notes} onDelete={handleDelete} />
     </div>
   );

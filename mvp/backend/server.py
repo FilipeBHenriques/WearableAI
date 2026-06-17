@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from database import init_db
 from paths import ASSETS_DIR, DIST_DIR
-from schemas import TextInput
+from schemas import CategorizeInput, NoteDetailResponse, NoteResponse, TextInput
 from services import capture_service, note_service, organizer_service, recording_service
 
 app = FastAPI()
@@ -29,6 +29,24 @@ if ASSETS_DIR.is_dir():
     )
 
 
+def _serialize_note_tree(note_id: int):
+    note = note_service.get_by_id(note_id)
+    if note is None:
+        return None
+
+    return {
+        "id": note.id,
+        "text": note.text,
+        "category": note.category,
+        "created_at": note.created_at,
+        "parent_note_id": note.parent_note_id,
+        "subnotes": [
+            _serialize_note_tree(subnote.id)
+            for subnote in note_service.get_subnotes(note_id)
+        ],
+    }
+
+
 # ── Pages ──────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -46,18 +64,15 @@ def index():
 @app.get("/api/notes")
 def api_notes():
     notes = note_service.get_all()
-    return [
-        {"id": n.id, "text": n.text, "category": n.category, "created_at": n.created_at}
-        for n in notes
-    ]
+    return [_serialize_note_tree(note.id) for note in notes]
 
 
 @app.get("/api/notes/{note_id}")
 def api_get_note(note_id: int):
-    note = note_service.get_by_id(note_id)
-    if note is None:
+    note_tree = _serialize_note_tree(note_id)
+    if note_tree is None:
         raise HTTPException(status_code=404, detail="Note not found")
-    return {"id": note.id, "text": note.text, "category": note.category, "created_at": note.created_at}
+    return note_tree
 
 
 @app.delete("/api/notes/{note_id}")
@@ -67,8 +82,8 @@ def api_delete_note(note_id: int):
 
 
 @app.post("/api/notes/{note_id}/categorize")
-def api_categorize_note(note_id: int):
-    result = organizer_service.categorize(note_id)
+def api_categorize_note(note_id: int, body: CategorizeInput | None = None):
+    result = organizer_service.categorize(note_id, is_subnote=bool(body and body.is_subnote))
     if result is None:
         raise HTTPException(status_code=404, detail="Note not found")
     return result
