@@ -14,9 +14,3 @@ export interface RecordResult {
   created_at: string | null;
   saved: boolean;
 }
-
-export interface CategorizeResult {
-  id: number;
-  category: string;
-  parent_note_id: number | null;
-}

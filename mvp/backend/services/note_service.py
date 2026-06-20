@@ -28,6 +28,10 @@ def get_subnotes(note_id: int) -> list[Note]:
     return get_child_notes(note_id)
 
 
+def get_all_flat() -> list[Note]:
+    return get_all_notes_flat()
+
+
 def save(text: str, category: str = PENDING_CATEGORY) -> tuple[int, str]:
     return save_note(text, category)
 
@@ -38,33 +42,6 @@ def update_category(note_id: int, category: str) -> None:
 
 def update_parent(note_id: int, parent_note_id: int | None) -> None:
     update_note_parent(note_id, parent_note_id)
-
-
-def get_random_parent_candidate(exclude_note_id: int) -> Note | None:
-    notes = get_all_notes_flat()
-    children_by_parent: dict[int, list[int]] = {}
-    for note in notes:
-        if note.parent_note_id is None:
-            continue
-        children_by_parent.setdefault(note.parent_note_id, []).append(note.id)
-
-    excluded_ids = {exclude_note_id}
-    pending = [exclude_note_id]
-    while pending:
-        current = pending.pop()
-        for child_id in children_by_parent.get(current, []):
-            if child_id in excluded_ids:
-                continue
-            excluded_ids.add(child_id)
-            pending.append(child_id)
-
-    candidates = [note for note in notes if note.id not in excluded_ids]
-    if not candidates:
-        return None
-
-    import random
-
-    return random.choice(candidates)
 
 
 def get_by_id(note_id: int) -> Note | None:

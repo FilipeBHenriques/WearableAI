@@ -11,20 +11,13 @@ import numpy as np
 import scipy.io.wavfile as wavfile
 import sounddevice as sd
 
-SAMPLE_RATE = 16_000
+from services import model_service
 
-_model = None
+SAMPLE_RATE = 16_000
+WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
+
 _frames: list[np.ndarray] = []
 _stream: sd.InputStream | None = None
-
-
-def _get_model():
-    global _model
-    if _model is None:
-        from faster_whisper import WhisperModel
-
-        _model = WhisperModel("base", device="cpu", compute_type="int8")
-    return _model
 
 
 def start_recording() -> None:
@@ -61,7 +54,12 @@ def stop_and_transcribe() -> str:
     wavfile.write(tmp_path, SAMPLE_RATE, (audio * 32_767).astype(np.int16))
 
     try:
-        segments, _ = _get_model().transcribe(tmp_path, beam_size=5, language="en")
+        language = None if WHISPER_LANGUAGE.lower() == "auto" else WHISPER_LANGUAGE
+        segments, _ = model_service.get_whisper_model().transcribe(
+            tmp_path,
+            beam_size=5,
+            language=language,
+        )
         return " ".join(seg.text for seg in segments).strip()
     finally:
         os.unlink(tmp_path)

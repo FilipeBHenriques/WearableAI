@@ -1,5 +1,5 @@
 import { del, get, post } from "./client";
-import type { CategorizeResult, Note, RecordResult } from "../types/note";
+import type { Note, RecordResult } from "../types/note";
 
 export const fetchNotes = () =>
   get<Note[]>("/api/notes");
@@ -12,9 +12,6 @@ export const startRecording = () =>
 
 export const stopRecording = () =>
   post<RecordResult>("/api/record/stop");
-
-export const categorizeNote = (id: number, is_subnote = false) =>
-  post<CategorizeResult>(`/api/notes/${id}/categorize`, { is_subnote });
 
 export const submitText = (text: string) =>
   post<RecordResult>("/api/text", { text });

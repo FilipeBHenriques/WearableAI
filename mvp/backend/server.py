@@ -6,19 +6,20 @@ from fastapi.staticfiles import StaticFiles
 
 from database import init_db
 from paths import ASSETS_DIR, DIST_DIR
-from schemas import CategorizeInput, NoteDetailResponse, NoteResponse, TextInput
-from services import capture_service, note_service, organizer_service, recording_service
+from schemas import NoteDetailResponse, NoteResponse, TextInput
+from services import capture_service, model_service, note_service, recording_service
 
 app = FastAPI()
 init_db()
 
 
 @app.on_event("startup")
-def log_paths() -> None:
+def startup() -> None:
     print(f"[backend] cwd={os.getcwd()}")
     print(f"[backend] dist={DIST_DIR} (exists={DIST_DIR.is_dir()})")
     if ASSETS_DIR.is_dir():
         print(f"[backend] serving /assets from {ASSETS_DIR}")
+    model_service.warm_up_all()
 
 
 if ASSETS_DIR.is_dir():
@@ -27,6 +28,11 @@ if ASSETS_DIR.is_dir():
         StaticFiles(directory=str(ASSETS_DIR)),
         name="assets",
     )
+
+
+@app.get("/api/health")
+def api_health():
+    return model_service.get_status()
 
 
 def _serialize_note_tree(note_id: int):
@@ -47,8 +53,6 @@ def _serialize_note_tree(note_id: int):
     }
 
 
-# ── Pages ──────────────────────────────────────────────────────────────────────
-
 @app.get("/", response_class=HTMLResponse)
 def index():
     dist_index = DIST_DIR / "index.html"
@@ -58,8 +62,6 @@ def index():
         "<h2>Run <code>cd frontend && npm run build</code> to serve the UI.</h2>"
     )
 
-
-# ── Notes ──────────────────────────────────────────────────────────────────────
 
 @app.get("/api/notes")
 def api_notes():
@@ -81,16 +83,6 @@ def api_delete_note(note_id: int):
     return {"deleted": note_id}
 
 
-@app.post("/api/notes/{note_id}/categorize")
-def api_categorize_note(note_id: int, body: CategorizeInput | None = None):
-    result = organizer_service.categorize(note_id, is_subnote=bool(body and body.is_subnote))
-    if result is None:
-        raise HTTPException(status_code=404, detail="Note not found")
-    return result
-
-
-# ── Recording ──────────────────────────────────────────────────────────────────
-
 @app.post("/api/record/start")
 def api_record_start():
     recording_service.start_recording()
@@ -102,14 +94,10 @@ def api_record_stop():
     return capture_service.stop_and_save()
 
 
-# ── Text input ─────────────────────────────────────────────────────────────────
-
 @app.post("/api/text")
 def api_text(body: TextInput):
     return capture_service.process_text(body.text)
 
-
-# ── SPA fallback (serves index.html for any non-API route in production) ───────
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 def spa_fallback(full_path: str):
