@@ -28,6 +28,7 @@ def process_note_text(text: str) -> CaptureResult:
         text=text,
         category=category,
         created_at=created_at,
+        status=note.status,
         saved=True,
     )
 

@@ -18,6 +18,14 @@ export function post<T>(url: string, body?: unknown): Promise<T> {
   });
 }
 
+export function patch<T>(url: string, body?: unknown): Promise<T> {
+  return request<T>(url, {
+    method: "PATCH",
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
 export function del(url: string): Promise<void> {
   return request<void>(url, { method: "DELETE" });
 }

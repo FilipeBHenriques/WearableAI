@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
@@ -6,7 +7,8 @@ from fastapi.staticfiles import StaticFiles
 
 from database import init_db
 from paths import ASSETS_DIR, DIST_DIR
-from schemas import NoteDetailResponse, NoteResponse, TextInput
+from models import NoteStatus
+from schemas import NoteDetailResponse, NoteResponse, NoteStatusInput, TextInput
 from services import capture_service, model_service, note_service, recording_service
 
 app = FastAPI()
@@ -35,7 +37,10 @@ def api_health():
     return model_service.get_status()
 
 
-def _serialize_note_tree(note_id: int):
+NoteQueryStatus = Literal["active", "done", "all"]
+
+
+def _serialize_note_tree(note_id: int, status: NoteStatus | None = None):
     note = note_service.get_by_id(note_id)
     if note is None:
         return None
@@ -45,10 +50,11 @@ def _serialize_note_tree(note_id: int):
         "text": note.text,
         "category": note.category,
         "created_at": note.created_at,
+        "status": note.status,
         "parent_note_id": note.parent_note_id,
         "subnotes": [
-            _serialize_note_tree(subnote.id)
-            for subnote in note_service.get_subnotes(note_id)
+            _serialize_note_tree(subnote.id, status)
+            for subnote in note_service.get_subnotes(note_id, status)
         ],
     }
 
@@ -64,9 +70,10 @@ def index():
 
 
 @app.get("/api/notes")
-def api_notes():
-    notes = note_service.get_all()
-    return [_serialize_note_tree(note.id) for note in notes]
+def api_notes(status: NoteQueryStatus | None = None):
+    note_status: NoteStatus | None = None if status in (None, "all") else status
+    notes = note_service.get_all(note_status)
+    return [_serialize_note_tree(note.id, note_status) for note in notes]
 
 
 @app.get("/api/notes/{note_id}")
@@ -81,6 +88,24 @@ def api_get_note(note_id: int):
 def api_delete_note(note_id: int):
     note_service.delete(note_id)
     return {"deleted": note_id}
+
+
+@app.patch("/api/notes/{note_id}/status")
+def api_mark_note_status(note_id: int, body: NoteStatusInput):
+    note = note_service.get_by_id(note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    note_service.mark_note_as(note_id, body.status)
+    return {"id": note_id, "status": body.status}
+
+
+@app.post("/api/notes/{note_id}/toggle-status")
+def api_toggle_note_status(note_id: int):
+    status = note_service.toggle_note_status(note_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"id": note_id, "status": status}
 
 
 @app.post("/api/record/start")

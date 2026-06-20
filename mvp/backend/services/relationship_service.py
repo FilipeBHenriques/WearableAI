@@ -27,7 +27,7 @@ class RelationshipResult:
 
 
 def _candidate_notes(note_id: int) -> list[Note]:
-    notes = note_service.get_all_flat()
+    notes = note_service.get_all_flat("active")
     children_by_parent: dict[int, list[int]] = {}
     for note in notes:
         if note.parent_note_id is None:
