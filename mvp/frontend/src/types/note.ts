@@ -8,6 +8,11 @@ export interface Note {
   created_at: string;
   status: NoteStatus;
   parent_note_id: number | null;
+  deadline_at: string | null;
+  importance_score: number;
+  urgency_score: number;
+  rank_score: number;
+  urgency_reason: string | null;
   subnotes?: Note[];
 }
 
@@ -17,6 +22,11 @@ export interface RecordResult {
   category: string | null;
   created_at: string | null;
   status: NoteStatus;
+  deadline_at: string | null;
+  importance_score: number;
+  urgency_score: number;
+  rank_score: number;
+  urgency_reason: string | null;
   saved: boolean;
 }
 

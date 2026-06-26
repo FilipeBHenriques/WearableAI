@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Note } from "../types/note";
+import { UrgencyBadges } from "./UrgencyBadges";
 
 interface Props {
   note: Note;
@@ -49,6 +50,7 @@ export function NoteCard({ note, onDelete, onToggleStatus, depth = 0 }: Props) {
           <p className="note-text">{note.text}</p>
           <span className="note-date">{note.created_at}</span>
         </Link>
+        <UrgencyBadges note={note} />
         {hasSubnotes ? (
           <button
             className="subnotes-toggle"

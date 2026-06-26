@@ -248,6 +248,34 @@ body {
   color: var(--muted);
 }
 
+.urgency-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding-top: 2px;
+}
+
+.urgency-badge {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 3px 6px;
+}
+
+.urgency-badge--deadline {
+  color: var(--reminder);
+  border-color: rgba(255, 170, 34, 0.36);
+}
+
+.urgency-badge--reason {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 /* ── Delete button ───────────────────────────────────────────────────────── */
 
 .delete-btn {

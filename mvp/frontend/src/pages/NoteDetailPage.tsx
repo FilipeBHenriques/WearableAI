@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { deleteNote, fetchNote } from "../api/notesApi";
+import { UrgencyBadges } from "../components/UrgencyBadges";
 import type { Note } from "../types/note";
 
 export function NoteDetailPage() {
@@ -52,6 +53,7 @@ export function NoteDetailPage() {
 
       <p className="detail-text">{note.text}</p>
       <span className="note-date">{note.created_at}</span>
+      <UrgencyBadges note={note} />
 
       <section className="subnotes-section">
         <div className="subnotes-header">
@@ -70,6 +72,7 @@ export function NoteDetailPage() {
                 </span>
                 <p className="note-text">{subnote.text}</p>
                 <span className="note-date">{subnote.created_at}</span>
+                <UrgencyBadges note={subnote} />
               </div>
             ))}
           </div>
