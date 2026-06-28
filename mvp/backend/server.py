@@ -8,8 +8,8 @@ from fastapi.staticfiles import StaticFiles
 from database import init_db
 from paths import ASSETS_DIR, DIST_DIR
 from models import NoteStatus
-from schemas import NoteDetailResponse, NoteResponse, NoteStatusInput, TextInput
-from services import capture_service, model_service, note_service, recording_service
+from schemas import LocationResponse, NoteDetailResponse, NoteResponse, NoteStatusInput, TextInput
+from services import capture_service, location_service, model_service, note_service, recording_service
 
 app = FastAPI()
 init_db()
@@ -52,6 +52,15 @@ def _serialize_note_tree(note_id: int, status: NoteStatus | None = None):
         "created_at": note.created_at,
         "status": note.status,
         "parent_note_id": note.parent_note_id,
+        "deadline_at": note.deadline_at,
+        "importance_score": note.importance_score,
+        "urgency_score": note.urgency_score,
+        "rank_score": note.rank_score,
+        "urgency_reason": note.urgency_reason,
+        "location_id": note.location_id,
+        "location_name": note.location_name,
+        "location_latitude": note.location_latitude,
+        "location_longitude": note.location_longitude,
         "subnotes": [
             _serialize_note_tree(subnote.id, status)
             for subnote in note_service.get_subnotes(note_id, status)
@@ -74,6 +83,19 @@ def api_notes(status: NoteQueryStatus | None = None):
     note_status: NoteStatus | None = None if status in (None, "all") else status
     notes = note_service.get_all(note_status)
     return [_serialize_note_tree(note.id, note_status) for note in notes]
+
+
+@app.get("/api/locations", response_model=list[LocationResponse])
+def api_locations():
+    return location_service.get_locations()
+
+
+@app.delete("/api/locations/{location_id}")
+def api_delete_location(location_id: int):
+    deleted = location_service.delete_saved_location(location_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Location not found")
+    return {"deleted": location_id}
 
 
 @app.get("/api/notes/{note_id}")

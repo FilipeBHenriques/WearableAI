@@ -1,6 +1,5 @@
 """Decides note-to-note relationships."""
 
-import json
 from dataclasses import dataclass
 from enum import Enum
 
@@ -8,6 +7,8 @@ import numpy as np
 
 from models import Note
 from services import model_service, note_service
+from services.llm_utils import extract_json_object
+from services.service_logger import log_service_call, log_service_step
 
 SUB_IDEA_THRESHOLD = 0.85
 NEW_IDEA_THRESHOLD = 0.45
@@ -61,6 +62,7 @@ def _nearest_note(note: Note, candidates: list[Note]) -> tuple[Note | None, floa
         return None, None
 
     model = model_service.get_sentence_model()
+    log_service_step("using embeddings for nearest note", note_id=note.id, candidates=len(candidates))
     note_embedding = model.encode(note.text)
     candidate_embeddings = model.encode([candidate.text for candidate in candidates])
 
@@ -72,6 +74,7 @@ def _nearest_note(note: Note, candidates: list[Note]) -> tuple[Note | None, floa
 
 
 def _ask_llm(note: Note, candidate: Note, similarity: float) -> RelationshipDecision:
+    log_service_step("using llm relationship decision", note_id=note.id, candidate_id=candidate.id, similarity=similarity)
     prompt = f"""Decide whether the new note should be nested under the parent note.
 
 Definitions:
@@ -98,13 +101,9 @@ JSON:"""
     raw_text = model_service.generate_llm(prompt, max_tokens=96).strip()
 
     try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError:
-        print(
-            f"[relationship] llm_invalid_json note={note.id} "
-            f"candidate={candidate.id} response={raw_text!r}",
-            flush=True,
-        )
+        parsed = extract_json_object(raw_text)
+    except ValueError:
+        log_service_step("llm invalid json", note_id=note.id, candidate_id=candidate.id, response=raw_text)
         return RelationshipDecision.NEW_IDEA
 
     decision = str(parsed.get("decision", "")).strip().upper()
@@ -113,52 +112,33 @@ JSON:"""
     return RelationshipDecision.NEW_IDEA
 
 
+@log_service_call
 def decide_relationship(note: Note) -> RelationshipResult:
     candidate, similarity = _nearest_note(note, _candidate_notes(note.id))
     if candidate is None or similarity is None:
-        print(
-            f"[relationship] note={note.id} decision=NEW_IDEA reason=no_candidates",
-            flush=True,
-        )
+        log_service_step("relationship new idea", note_id=note.id, reason="no_candidates")
         return RelationshipResult(RelationshipDecision.NEW_IDEA, None, similarity)
 
     if similarity > SUB_IDEA_THRESHOLD:
-        print(
-            f"[relationship] note={note.id} candidate={candidate.id} "
-            f"similarity={similarity:.3f} decision=SUB_IDEA",
-            flush=True,
-        )
+        log_service_step("embedding threshold matched sub idea", note_id=note.id, candidate_id=candidate.id, similarity=similarity)
         return RelationshipResult(RelationshipDecision.SUB_IDEA, candidate.id, similarity)
 
     if similarity < NEW_IDEA_THRESHOLD:
-        print(
-            f"[relationship] note={note.id} candidate={candidate.id} "
-            f"similarity={similarity:.3f} decision=NEW_IDEA",
-            flush=True,
-        )
+        log_service_step("embedding threshold matched new idea", note_id=note.id, candidate_id=candidate.id, similarity=similarity)
         return RelationshipResult(RelationshipDecision.NEW_IDEA, None, similarity)
 
     llm_status = model_service.get_llm_config_status()
     if not llm_status["configured"]:
-        print(
-            f"[relationship] note={note.id} candidate={candidate.id} "
-            f"similarity={similarity:.3f} decision=ASK_LLM "
-            f"reason={llm_status['error']}",
-            flush=True,
-        )
+        log_service_step("llm unavailable", note_id=note.id, candidate_id=candidate.id, similarity=similarity, error=llm_status["error"])
         return RelationshipResult(RelationshipDecision.ASK_LLM, None, similarity)
 
     llm_decision = _ask_llm(note, candidate, similarity)
     parent_note_id = candidate.id if llm_decision == RelationshipDecision.SUB_IDEA else None
-    print(
-        f"[relationship] note={note.id} candidate={candidate.id} "
-        f"similarity={similarity:.3f} decision=ASK_LLM "
-        f"llm_decision={llm_decision.value} parent={parent_note_id}",
-        flush=True,
-    )
+    log_service_step("llm relationship selected", note_id=note.id, candidate_id=candidate.id, similarity=similarity, decision=llm_decision.value, parent_note_id=parent_note_id)
     return RelationshipResult(RelationshipDecision.ASK_LLM, parent_note_id, similarity)
 
 
+@log_service_call
 def apply_relationship(note: Note) -> Note:
     if note.parent_note_id is not None:
         return note

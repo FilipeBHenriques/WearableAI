@@ -2,6 +2,7 @@
 
 import os
 import json
+import logging
 import shutil
 import subprocess
 import threading
@@ -10,6 +11,12 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+from services.service_logger import log_service_call, log_service_step
+
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 SENTENCE_MODEL_NAME = os.getenv("SENTENCE_MODEL_NAME", "all-MiniLM-L6-v2")
 WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL_NAME", "base")
@@ -28,6 +35,16 @@ OLLAMA_MODEL_PREFERENCES = [
     "gpt-oss:20b",
 ]
 
+for logger_name in (
+    "sentence_transformers",
+    "transformers",
+    "huggingface_hub",
+    "httpx",
+    "urllib3",
+    "torch",
+):
+    logging.getLogger(logger_name).setLevel(logging.WARNING)
+
 _sentence_model = None
 _sentence_model_lock = threading.Lock()
 
@@ -37,20 +54,29 @@ _whisper_model_lock = threading.Lock()
 ModelLoader = tuple[str, Callable[[], None]]
 
 
+@log_service_call
 def get_sentence_model():
     global _sentence_model
     with _sentence_model_lock:
         if _sentence_model is None:
+            log_service_step("loading sentence model", model=SENTENCE_MODEL_NAME)
             from sentence_transformers import SentenceTransformer
 
             _sentence_model = SentenceTransformer(SENTENCE_MODEL_NAME)
     return _sentence_model
 
 
+@log_service_call
 def get_whisper_model():
     global _whisper_model
     with _whisper_model_lock:
         if _whisper_model is None:
+            log_service_step(
+                "loading whisper model",
+                model=WHISPER_MODEL_NAME,
+                device=WHISPER_DEVICE,
+                compute_type=WHISPER_COMPUTE_TYPE,
+            )
             from faster_whisper import WhisperModel
 
             _whisper_model = WhisperModel(
@@ -111,6 +137,7 @@ def _select_ollama_model(available_models: list[str]) -> str | None:
     return available_models[0] if available_models else None
 
 
+@log_service_call
 def get_llm_config_status() -> dict[str, Any]:
     try:
         tags = _ollama_tags()
@@ -163,45 +190,62 @@ def get_llm_config_status() -> dict[str, Any]:
     }
 
 
-def generate_llm(prompt: str, max_tokens: int = 8) -> str:
+@log_service_call
+def generate_llm(prompt: str, max_tokens: int = 8, json_mode: bool = False) -> str:
     llm_status = get_llm_config_status()
     if not llm_status["configured"]:
         raise RuntimeError(str(llm_status["error"]))
 
+    payload = {
+        "model": llm_status["model"],
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "num_predict": max_tokens,
+            "temperature": 0,
+        },
+    }
+    if json_mode:
+        payload["format"] = "json"
+
     response = _ollama_json(
         "/api/generate",
-        {
-            "model": llm_status["model"],
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "num_predict": max_tokens,
-                "temperature": 0,
-            },
-        },
+        payload,
         timeout=OLLAMA_GENERATE_TIMEOUT,
     )
     return str(response.get("response", "")).strip()
 
 
+@log_service_call
 def warm_classification_model() -> None:
     get_sentence_model()
 
 
+@log_service_call
 def warm_recording_model() -> None:
     get_whisper_model()
 
 
+@log_service_call
 def warm_relationship_model() -> None:
     status = get_llm_config_status()
     if status["configured"]:
+        log_service_step("checking relationship llm", model=status["model"])
         generate_llm("Return exactly: OK", max_tokens=2)
     else:
-        print(f"[models] relationship llm disabled: {status['error']}", flush=True)
+        log_service_step("relationship llm disabled", error=status["error"])
+
+
+@log_service_call
+def warm_location_model() -> None:
+    from services import location_service
+
+    location_service.warm_up()
 
 
 _model_loaders: list[ModelLoader] = [
     ("classification", warm_classification_model),
+    ("location", warm_location_model),
     ("recording", warm_recording_model),
     ("relationship", warm_relationship_model),
 ]
@@ -226,6 +270,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@log_service_call
 def warm_up_all() -> None:
     """Warm shared models in a known-safe order before serving requests."""
     _state["ready"] = False
@@ -239,25 +284,26 @@ def warm_up_all() -> None:
         model_state["started_at"] = _now()
         model_state["completed_at"] = None
 
-        print(f"[models] warming {name}...", flush=True)
+        log_service_step("warming model", name=name)
         try:
             load_model()
         except Exception as exc:
             model_state["status"] = "failed"
             model_state["error"] = repr(exc)
             model_state["completed_at"] = _now()
-            print(f"[models] {name} failed: {exc!r}", flush=True)
+            log_service_step("model failed", name=name, error=repr(exc))
             raise
 
         model_state["status"] = "ready"
         model_state["completed_at"] = _now()
-        print(f"[models] {name} ready", flush=True)
+        log_service_step("model ready", name=name)
 
     _state["ready"] = True
     _state["completed_at"] = _now()
-    print("[models] all models ready", flush=True)
+    log_service_step("all models ready")
 
 
+@log_service_call
 def get_status() -> dict[str, Any]:
     return {
         "ready": _state["ready"],

@@ -5,6 +5,16 @@ NoteStatus = Literal["active", "done"]
 
 
 @dataclass
+class Location:
+    id: int
+    name: str
+    latitude: float
+    longitude: float
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class Note:
     id: int
     text: str
@@ -12,3 +22,12 @@ class Note:
     created_at: str
     status: NoteStatus = "active"
     parent_note_id: int | None = None
+    deadline_at: str | None = None
+    importance_score: int = 1
+    urgency_score: int = 0
+    rank_score: int = 0
+    urgency_reason: str | None = None
+    location_id: int | None = None
+    location_name: str | None = None
+    location_latitude: float | None = None
+    location_longitude: float | None = None
