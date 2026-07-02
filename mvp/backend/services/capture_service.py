@@ -7,6 +7,7 @@ from services import (
     gps_service,
     location_service,
     note_service,
+    recurrence_service,
     recording_service,
     relationship_service,
     urgency_service,
@@ -89,6 +90,27 @@ def process_note_text(text: str) -> CaptureResult:
     except Exception as exc:
         log_service_step("location failed", note_id=note_id, error=repr(exc))
 
+    recurrence = recurrence_service.RecurrenceResult()
+    try:
+        recurrence = recurrence_service.analyze_text(note.text)
+        if recurrence.repeat_cycle is not None:
+            note_service.update_recurrence(
+                note_id,
+                recurrence.repeat_cycle,
+                recurrence.repeat_days,
+                recurrence.repeat_months,
+                recurrence.repeat_time,
+            )
+            note_service.update_category(note_id, "Goal")
+            note.repeat_cycle = recurrence.repeat_cycle
+            note.repeat_days = recurrence.repeat_days
+            note.repeat_months = recurrence.repeat_months
+            note.repeat_time = recurrence.repeat_time
+            note.category = "Goal"
+            category = note.category
+    except Exception as exc:
+        log_service_step("recurrence failed", note_id=note_id, error=repr(exc))
+
     return CaptureResult(
         id=note_id,
         text=text,
@@ -104,6 +126,14 @@ def process_note_text(text: str) -> CaptureResult:
         location_name=note.location_name,
         location_latitude=note.location_latitude,
         location_longitude=note.location_longitude,
+        repeat_cycle=note.repeat_cycle,
+        repeat_days=note.repeat_days,
+        repeat_months=note.repeat_months,
+        repeat_time=note.repeat_time,
+        is_repeating=recurrence_service.is_repeating(note),
+        is_due_today=recurrence_service.is_due_on(note),
+        completed_today=recurrence_service.completed_on(note),
+        repeat_display=recurrence_service.repeat_display(note),
         saved=True,
         command_processed=True,
         command_type=command.type.value,

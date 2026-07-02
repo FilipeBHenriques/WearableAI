@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from typing import Literal
 
-NoteStatus = Literal["active", "done"]
+NoteStatus = str
+RepeatCycle = Literal["daily", "weekly", "monthly", "yearly"]
 
 
 @dataclass
@@ -31,3 +32,7 @@ class Note:
     location_name: str | None = None
     location_latitude: float | None = None
     location_longitude: float | None = None
+    repeat_cycle: RepeatCycle | None = None
+    repeat_days: list[int] | None = None
+    repeat_months: list[int] | None = None
+    repeat_time: str | None = None

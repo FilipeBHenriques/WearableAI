@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import database
 from services.llm_utils import extract_json_object
-from services import capture_service, command_service, location_service, note_service, urgency_service
+from services import capture_service, command_service, location_service, note_service, recurrence_service, urgency_service
 
 
 class LocationCaptureTests(unittest.TestCase):
@@ -185,6 +185,77 @@ class LocationCaptureTests(unittest.TestCase):
             extract_json_object('prefix {"command":"save_location","location_name":"gym"} suffix'),
             {"command": "save_location", "location_name": "gym"},
         )
+
+    def test_recurrence_fallback_detects_daily_repeat(self):
+        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
+            result = recurrence_service.analyze_text("drink water every day")
+
+        self.assertEqual(result.repeat_cycle, "daily")
+        self.assertIsNone(result.repeat_days)
+
+    def test_recurrence_fallback_detects_weekly_repeat_with_time(self):
+        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
+            result = recurrence_service.analyze_text("go to the gym monday wednesday friday at 18")
+
+        self.assertEqual(result.repeat_cycle, "weekly")
+        self.assertEqual(result.repeat_days, [1, 3, 5])
+        self.assertEqual(result.repeat_time, "18:00")
+
+    def test_recurrence_fallback_detects_monthly_repeat(self):
+        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
+            result = recurrence_service.analyze_text("pay rent every month on the 1st")
+
+        self.assertEqual(result.repeat_cycle, "monthly")
+        self.assertEqual(result.repeat_days, [1])
+
+    def test_recurrence_fallback_detects_yearly_repeat(self):
+        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
+            result = recurrence_service.analyze_text("renew passport every year on July 2")
+
+        self.assertEqual(result.repeat_cycle, "yearly")
+        self.assertEqual(result.repeat_days, [2])
+        self.assertEqual(result.repeat_months, [7])
+
+    def test_active_notes_include_due_repeats_and_exclude_not_due(self):
+        due_id, _ = note_service.save("daily water")
+        note_service.update_recurrence(due_id, "daily", None, None, None)
+
+        not_due_id, _ = note_service.save("not today")
+        tomorrow_weekday = (recurrence_service.date.today().isoweekday() % 7) + 1
+        note_service.update_recurrence(not_due_id, "weekly", [tomorrow_weekday], None, None)
+
+        active_ids = {note.id for note in note_service.get_all("active")}
+
+        self.assertIn(due_id, active_ids)
+        self.assertNotIn(not_due_id, active_ids)
+
+    def test_completed_today_repeat_is_hidden_from_active(self):
+        note_id, _ = note_service.save("daily water")
+        note_service.update_recurrence(note_id, "daily", None, None, None)
+
+        status = note_service.toggle_note_status(note_id)
+        active_ids = {note.id for note in note_service.get_all("active")}
+
+        self.assertEqual(status, recurrence_service.repeat_done_status())
+        self.assertNotIn(note_id, active_ids)
+
+    def test_repeat_toggle_clears_today_completion(self):
+        note_id, _ = note_service.save("daily water")
+        note_service.update_recurrence(note_id, "daily", None, None, None)
+
+        note_service.toggle_note_status(note_id)
+        status = note_service.toggle_note_status(note_id)
+
+        self.assertEqual(status, "active")
+        self.assertIn(note_id, {note.id for note in note_service.get_all("active")})
+
+    def test_normal_note_toggle_still_marks_done(self):
+        note_id, _ = note_service.save("normal task")
+
+        status = note_service.toggle_note_status(note_id)
+
+        self.assertEqual(status, "done")
+        self.assertEqual(note_service.get_by_id(note_id).status, "done")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,12 @@ export const fetchNotes = (status?: NoteQueryStatus) =>
 export const fetchNote = (id: number) =>
   get<Note>(`/api/notes/${id}`);
 
+export const fetchTodayRepeats = () =>
+  get<Note[]>("/api/repeats/today");
+
+export const fetchHealth = () =>
+  get<Record<string, unknown>>("/api/health");
+
 export const fetchLocations = () =>
   get<Location[]>("/api/locations");
 

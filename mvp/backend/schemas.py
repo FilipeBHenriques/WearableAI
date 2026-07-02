@@ -1,7 +1,8 @@
 from pydantic import BaseModel
 from typing import Literal
 
-NoteStatus = Literal["active", "done"]
+NoteStatus = str
+RepeatCycle = Literal["daily", "weekly", "monthly", "yearly"]
 
 
 class TextInput(BaseModel):
@@ -23,6 +24,14 @@ class CaptureResult(BaseModel):
     location_name: str | None = None
     location_latitude: float | None = None
     location_longitude: float | None = None
+    repeat_cycle: RepeatCycle | None = None
+    repeat_days: list[int] | None = None
+    repeat_months: list[int] | None = None
+    repeat_time: str | None = None
+    is_repeating: bool = False
+    is_due_today: bool = False
+    completed_today: bool = False
+    repeat_display: str | None = None
     saved: bool
     command_processed: bool = False
     command_type: str | None = None
@@ -45,6 +54,14 @@ class NoteResponse(BaseModel):
     location_name: str | None = None
     location_latitude: float | None = None
     location_longitude: float | None = None
+    repeat_cycle: RepeatCycle | None = None
+    repeat_days: list[int] | None = None
+    repeat_months: list[int] | None = None
+    repeat_time: str | None = None
+    is_repeating: bool = False
+    is_due_today: bool = False
+    completed_today: bool = False
+    repeat_display: str | None = None
 
 
 class NoteDetailResponse(NoteResponse):

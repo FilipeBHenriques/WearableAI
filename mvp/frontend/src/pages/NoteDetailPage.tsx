@@ -48,12 +48,13 @@ export function NoteDetailPage() {
         <button className="delete-btn" onClick={handleDelete}>Delete</button>
       </div>
 
-      <span className={`note-category cat-${note.category.toLowerCase()}`}>
+      <span className={`note-category cat-${note.category.toLowerCase().replace(/\s+/g, "-")}`}>
         {note.category}
       </span>
 
       <p className="detail-text">{note.text}</p>
       <span className="note-date">{note.created_at}</span>
+      {note.repeat_display ? <span className="repeat-badge">{note.repeat_display}</span> : null}
       <UrgencyBadges note={note} />
       <LocationBadge note={note} />
 
@@ -69,7 +70,7 @@ export function NoteDetailPage() {
           <div className="notes-list">
             {note.subnotes.map((subnote) => (
               <div key={subnote.id} className="note-card note-card--subnote">
-                <span className={`note-category cat-${subnote.category.toLowerCase()}`}>
+                <span className={`note-category cat-${subnote.category.toLowerCase().replace(/\s+/g, "-")}`}>
                   {subnote.category}
                 </span>
                 <p className="note-text">{subnote.text}</p>

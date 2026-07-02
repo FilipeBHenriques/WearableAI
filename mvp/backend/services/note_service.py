@@ -13,11 +13,13 @@ from database import (
     get_root_notes,
     save_note,
     update_note_category,
+    update_note_recurrence,
     update_note_urgency,
     update_note_parent,
     update_note_status,
 )
 from models import Note, NoteStatus
+from services import recurrence_service
 from services.service_logger import log_service_call, log_service_step
 
 PENDING_CATEGORY = "Uncategorized"
@@ -32,7 +34,21 @@ def get_all(status: NoteStatus | None = None) -> list[Note]:
         log_service_step("loaded root notes", count=len(notes), status=status)
         return notes
 
-    notes = get_all_notes_flat(status)
+    notes = get_all_notes_flat(None if status == ACTIVE_STATUS else status)
+    if status == ACTIVE_STATUS:
+        notes = [
+            note
+            for note in notes
+            if (
+                note.status == ACTIVE_STATUS
+                and not recurrence_service.is_repeating(note)
+            )
+            or (
+                recurrence_service.is_repeating(note)
+                and recurrence_service.is_available_today(note)
+            )
+        ]
+
     note_ids = {note.id for note in notes}
     root_notes = [
         note
@@ -45,6 +61,19 @@ def get_all(status: NoteStatus | None = None) -> list[Note]:
 
 @log_service_call
 def get_subnotes(note_id: int, status: NoteStatus | None = None) -> list[Note]:
+    if status == ACTIVE_STATUS:
+        return [
+            note
+            for note in get_child_notes(note_id, None)
+            if (
+                note.status == ACTIVE_STATUS
+                and not recurrence_service.is_repeating(note)
+            )
+            or (
+                recurrence_service.is_repeating(note)
+                and recurrence_service.is_available_today(note)
+            )
+        ]
     return get_child_notes(note_id, status)
 
 
@@ -64,6 +93,31 @@ def save(text: str, category: str = PENDING_CATEGORY) -> tuple[int, str]:
 def update_category(note_id: int, category: str) -> None:
     log_service_step("updating category", note_id=note_id, category=category)
     update_note_category(note_id, category)
+
+
+@log_service_call
+def update_recurrence(
+    note_id: int,
+    repeat_cycle: str | None,
+    repeat_days: list[int] | None,
+    repeat_months: list[int] | None,
+    repeat_time: str | None,
+) -> None:
+    log_service_step(
+        "updating recurrence",
+        note_id=note_id,
+        repeat_cycle=repeat_cycle,
+        repeat_days=repeat_days,
+        repeat_months=repeat_months,
+        repeat_time=repeat_time,
+    )
+    update_note_recurrence(
+        note_id,
+        repeat_cycle,
+        repeat_days,
+        repeat_months,
+        repeat_time,
+    )
 
 
 @log_service_call
@@ -114,6 +168,17 @@ def mark_note_as(note_id: int, status: NoteStatus) -> None:
     if status not in (ACTIVE_STATUS, DONE_STATUS):
         raise ValueError(f"Unsupported note status: {status}")
 
+    note = get_note_by_id(note_id)
+    if note is not None and recurrence_service.is_repeating(note):
+        next_status = (
+            recurrence_service.repeat_done_status()
+            if status == DONE_STATUS
+            else ACTIVE_STATUS
+        )
+        log_service_step("updating repeat status", note_id=note_id, status=next_status)
+        update_note_status(note_id, next_status)
+        return
+
     note_ids = [note_id, *_descendant_ids(note_id)]
 
     for current_id in note_ids:
@@ -127,6 +192,16 @@ def toggle_note_status(note_id: int) -> NoteStatus | None:
     if note is None:
         return None
 
+    if recurrence_service.is_repeating(note):
+        next_status = (
+            ACTIVE_STATUS
+            if recurrence_service.completed_on(note)
+            else recurrence_service.repeat_done_status()
+        )
+        log_service_step("toggling repeat status", note_id=note_id, status=next_status)
+        update_note_status(note_id, next_status)
+        return next_status
+
     next_status: NoteStatus = DONE_STATUS if note.status == ACTIVE_STATUS else ACTIVE_STATUS
     mark_note_as(note_id, next_status)
     return next_status
@@ -135,6 +210,17 @@ def toggle_note_status(note_id: int) -> NoteStatus | None:
 @log_service_call
 def get_by_id(note_id: int) -> Note | None:
     return get_note_by_id(note_id)
+
+
+@log_service_call
+def get_today_repeats() -> list[Note]:
+    notes = [
+        note
+        for note in get_all_notes_flat()
+        if recurrence_service.is_repeating(note) and recurrence_service.is_due_on(note)
+    ]
+    log_service_step("loaded today repeats", count=len(notes))
+    return notes
 
 
 @log_service_call

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import datetime
 
@@ -18,14 +19,18 @@ def init_db():
             text        TEXT    NOT NULL,
             category    TEXT    NOT NULL,
             created_at  TEXT    NOT NULL,
-            status      TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'done')),
+            status      TEXT    NOT NULL DEFAULT 'active',
             parent_note_id INTEGER REFERENCES notes(id),
             deadline_at TEXT,
             importance_score INTEGER NOT NULL DEFAULT 1,
             urgency_score INTEGER NOT NULL DEFAULT 0,
             rank_score INTEGER NOT NULL DEFAULT 0,
             urgency_reason TEXT,
-            location_id INTEGER REFERENCES locations(id)
+            location_id INTEGER REFERENCES locations(id),
+            repeat_cycle TEXT,
+            repeat_days TEXT,
+            repeat_months TEXT,
+            repeat_time TEXT
         )
     """)
     conn.execute("""
@@ -99,6 +104,35 @@ def update_note_parent(note_id: int, parent_note_id: int | None) -> None:
 def update_note_status(note_id: int, status: NoteStatus) -> None:
     conn = _connect()
     conn.execute("UPDATE notes SET status = ? WHERE id = ?", (status, note_id))
+    conn.commit()
+    conn.close()
+
+
+def update_note_recurrence(
+    note_id: int,
+    repeat_cycle: str | None,
+    repeat_days: list[int] | None,
+    repeat_months: list[int] | None,
+    repeat_time: str | None,
+) -> None:
+    conn = _connect()
+    conn.execute(
+        """
+        UPDATE notes
+        SET repeat_cycle = ?,
+            repeat_days = ?,
+            repeat_months = ?,
+            repeat_time = ?
+        WHERE id = ?
+        """,
+        (
+            repeat_cycle,
+            json.dumps(repeat_days) if repeat_days is not None else None,
+            json.dumps(repeat_months) if repeat_months is not None else None,
+            repeat_time,
+            note_id,
+        ),
+    )
     conn.commit()
     conn.close()
 
@@ -220,6 +254,17 @@ def _row_to_location(row: sqlite3.Row) -> Location:
 
 
 def _row_to_note(row: sqlite3.Row) -> Note:
+    def parse_int_list(value: str | None) -> list[int] | None:
+        if value is None:
+            return None
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(parsed, list):
+            return None
+        return [int(item) for item in parsed if isinstance(item, int)]
+
     return Note(
         id=row["id"],
         text=row["text"],
@@ -236,6 +281,10 @@ def _row_to_note(row: sqlite3.Row) -> Note:
         location_name=row["location_name"],
         location_latitude=row["location_latitude"],
         location_longitude=row["location_longitude"],
+        repeat_cycle=row["repeat_cycle"],
+        repeat_days=parse_int_list(row["repeat_days"]),
+        repeat_months=parse_int_list(row["repeat_months"]),
+        repeat_time=row["repeat_time"],
     )
 
 
@@ -254,7 +303,8 @@ def get_root_notes(status: NoteStatus | None = None) -> list[Note]:
         SELECT notes.id, notes.text, notes.category, notes.created_at, notes.status,
                notes.parent_note_id, notes.deadline_at, notes.importance_score,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
-               notes.location_id, locations.name AS location_name,
+               notes.location_id, notes.repeat_cycle, notes.repeat_days,
+               notes.repeat_months, notes.repeat_time, locations.name AS location_name,
                locations.latitude AS location_latitude,
                locations.longitude AS location_longitude
         FROM notes
@@ -283,7 +333,8 @@ def get_child_notes(parent_note_id: int, status: NoteStatus | None = None) -> li
         SELECT notes.id, notes.text, notes.category, notes.created_at, notes.status,
                notes.parent_note_id, notes.deadline_at, notes.importance_score,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
-               notes.location_id, locations.name AS location_name,
+               notes.location_id, notes.repeat_cycle, notes.repeat_days,
+               notes.repeat_months, notes.repeat_time, locations.name AS location_name,
                locations.latitude AS location_latitude,
                locations.longitude AS location_longitude
         FROM notes
@@ -309,7 +360,8 @@ def get_all_notes_flat(status: NoteStatus | None = None) -> list[Note]:
         SELECT notes.id, notes.text, notes.category, notes.created_at, notes.status,
                notes.parent_note_id, notes.deadline_at, notes.importance_score,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
-               notes.location_id, locations.name AS location_name,
+               notes.location_id, notes.repeat_cycle, notes.repeat_days,
+               notes.repeat_months, notes.repeat_time, locations.name AS location_name,
                locations.latitude AS location_latitude,
                locations.longitude AS location_longitude
         FROM notes
@@ -334,7 +386,8 @@ def get_note_by_id(note_id: int) -> Note | None:
         SELECT notes.id, notes.text, notes.category, notes.created_at, notes.status,
                notes.parent_note_id, notes.deadline_at, notes.importance_score,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
-               notes.location_id, locations.name AS location_name,
+               notes.location_id, notes.repeat_cycle, notes.repeat_days,
+               notes.repeat_months, notes.repeat_time, locations.name AS location_name,
                locations.latitude AS location_latitude,
                locations.longitude AS location_longitude
         FROM notes

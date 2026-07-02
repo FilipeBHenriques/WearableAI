@@ -9,7 +9,7 @@ from database import init_db
 from paths import ASSETS_DIR, DIST_DIR
 from models import NoteStatus
 from schemas import LocationResponse, NoteDetailResponse, NoteResponse, NoteStatusInput, TextInput
-from services import capture_service, location_service, model_service, note_service, recording_service
+from services import capture_service, location_service, model_service, note_service, recurrence_service, recording_service
 
 app = FastAPI()
 init_db()
@@ -45,6 +45,10 @@ def _serialize_note_tree(note_id: int, status: NoteStatus | None = None):
     if note is None:
         return None
 
+    return _serialize_note(note, status)
+
+
+def _serialize_note(note, status: NoteStatus | None = None):
     return {
         "id": note.id,
         "text": note.text,
@@ -61,9 +65,17 @@ def _serialize_note_tree(note_id: int, status: NoteStatus | None = None):
         "location_name": note.location_name,
         "location_latitude": note.location_latitude,
         "location_longitude": note.location_longitude,
+        "repeat_cycle": note.repeat_cycle,
+        "repeat_days": note.repeat_days,
+        "repeat_months": note.repeat_months,
+        "repeat_time": note.repeat_time,
+        "is_repeating": recurrence_service.is_repeating(note),
+        "is_due_today": recurrence_service.is_due_on(note),
+        "completed_today": recurrence_service.completed_on(note),
+        "repeat_display": recurrence_service.repeat_display(note),
         "subnotes": [
             _serialize_note_tree(subnote.id, status)
-            for subnote in note_service.get_subnotes(note_id, status)
+            for subnote in note_service.get_subnotes(note.id, status)
         ],
     }
 
@@ -83,6 +95,11 @@ def api_notes(status: NoteQueryStatus | None = None):
     note_status: NoteStatus | None = None if status in (None, "all") else status
     notes = note_service.get_all(note_status)
     return [_serialize_note_tree(note.id, note_status) for note in notes]
+
+
+@app.get("/api/repeats/today")
+def api_today_repeats():
+    return [_serialize_note(note) for note in note_service.get_today_repeats()]
 
 
 @app.get("/api/locations", response_model=list[LocationResponse])
@@ -119,7 +136,8 @@ def api_mark_note_status(note_id: int, body: NoteStatusInput):
         raise HTTPException(status_code=404, detail="Note not found")
 
     note_service.mark_note_as(note_id, body.status)
-    return {"id": note_id, "status": body.status}
+    updated = note_service.get_by_id(note_id)
+    return {"id": note_id, "status": updated.status if updated else body.status}
 
 
 @app.post("/api/notes/{note_id}/toggle-status")

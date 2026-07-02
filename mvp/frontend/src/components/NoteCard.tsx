@@ -17,16 +17,18 @@ export function NoteCard({ note, onDelete, onToggleStatus, depth = 0 }: Props) {
   const [isExpanded, setIsExpanded] = useState(true);
   const branchLabel = depth === 0 ? "Subnotes" : "Nested subnotes";
   const isDone = note.status === "done";
+  const categoryClass = `cat-${note.category.toLowerCase().replace(/\s+/g, "-")}`;
+  const statusLabel = note.completed_today ? "Done today" : isDone ? "Done" : null;
 
   return (
     <div className="note-card-shell" data-depth={depth} data-status={note.status}>
       <div className="note-card">
         <div className="note-card__header">
           <div className="note-card__meta">
-            <span className={`note-category cat-${note.category.toLowerCase()}`}>
+            <span className={`note-category ${categoryClass}`}>
               {note.category}
             </span>
-            {isDone ? <span className="note-status">Done</span> : null}
+            {statusLabel ? <span className="note-status">{statusLabel}</span> : null}
           </div>
           <div className="note-card__actions">
             <button
@@ -51,6 +53,11 @@ export function NoteCard({ note, onDelete, onToggleStatus, depth = 0 }: Props) {
           <p className="note-text">{note.text}</p>
           <span className="note-date">{note.created_at}</span>
         </Link>
+        {note.repeat_display ? (
+          <div className="repeat-badges">
+            <span className="repeat-badge">{note.repeat_display}</span>
+          </div>
+        ) : null}
         <UrgencyBadges note={note} />
         <LocationBadge note={note} />
         {hasSubnotes ? (
