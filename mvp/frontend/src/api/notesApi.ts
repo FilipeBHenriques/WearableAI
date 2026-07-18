@@ -1,5 +1,5 @@
 import { del, get, patch, post } from "./client";
-import type { Location, Note, NoteQueryStatus, NoteStatus, NoteStatusResult, RecordResult } from "../types/note";
+import type { CaptureJob, Location, Note, NoteQueryStatus, NoteStatus, NoteStatusResult, RecordResult, RecordingJobResult } from "../types/note";
 
 export const fetchNotes = (status?: NoteQueryStatus) =>
   get<Note[]>(status ? `/api/notes?status=${status}` : "/api/notes");
@@ -16,14 +16,17 @@ export const fetchHealth = () =>
 export const fetchLocations = () =>
   get<Location[]>("/api/locations");
 
+export const fetchActiveCaptureJobs = () =>
+  get<CaptureJob[]>("/api/capture/jobs/active");
+
 export const deleteLocation = (id: number) =>
   del(`/api/locations/${id}`);
 
 export const startRecording = () =>
-  post<void>("/api/record/start");
+  post<RecordingJobResult>("/api/record/start");
 
 export const stopRecording = () =>
-  post<RecordResult>("/api/record/stop");
+  post<RecordingJobResult>("/api/record/stop");
 
 export const submitText = (text: string) =>
   post<RecordResult>("/api/text", { text });

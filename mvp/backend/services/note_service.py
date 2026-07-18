@@ -12,14 +12,16 @@ from database import (
     get_note_by_id,
     get_root_notes,
     save_note,
+    update_note_audio_path,
     update_note_category,
+    update_note_estimated_duration,
     update_note_recurrence,
     update_note_urgency,
     update_note_parent,
     update_note_status,
 )
 from models import Note, NoteStatus
-from services import recurrence_service
+from services import event_bus, recurrence_service
 from services.service_logger import log_service_call, log_service_step
 
 PENDING_CATEGORY = "Uncategorized"
@@ -86,6 +88,7 @@ def get_all_flat(status: NoteStatus | None = None) -> list[Note]:
 def save(text: str, category: str = PENDING_CATEGORY) -> tuple[int, str]:
     note_id, created_at = save_note(text, category)
     log_service_step("saved note", note_id=note_id, category=category)
+    event_bus.publish("notes_changed", {"note_id": note_id})
     return note_id, created_at
 
 
@@ -146,6 +149,22 @@ def update_urgency(
     )
 
 
+@log_service_call
+def update_estimated_duration(note_id: int, estimated_duration_minutes: int | None) -> None:
+    log_service_step(
+        "updating estimated duration",
+        note_id=note_id,
+        estimated_duration_minutes=estimated_duration_minutes,
+    )
+    update_note_estimated_duration(note_id, estimated_duration_minutes)
+
+
+@log_service_call
+def update_audio_path(note_id: int, audio_path: str | None) -> None:
+    log_service_step("updating audio path", note_id=note_id, audio_path=audio_path)
+    update_note_audio_path(note_id, audio_path)
+
+
 def _descendant_ids(note_id: int) -> list[int]:
     children_by_parent: dict[int, list[int]] = {}
     for note in get_all_notes_flat():
@@ -177,6 +196,7 @@ def mark_note_as(note_id: int, status: NoteStatus) -> None:
         )
         log_service_step("updating repeat status", note_id=note_id, status=next_status)
         update_note_status(note_id, next_status)
+        event_bus.publish("notes_changed", {"note_id": note_id})
         return
 
     note_ids = [note_id, *_descendant_ids(note_id)]
@@ -184,6 +204,8 @@ def mark_note_as(note_id: int, status: NoteStatus) -> None:
     for current_id in note_ids:
         log_service_step("updating status", note_id=current_id, status=status)
         update_note_status(current_id, status)
+
+    event_bus.publish("notes_changed", {"note_id": note_id})
 
 
 @log_service_call
@@ -200,6 +222,7 @@ def toggle_note_status(note_id: int) -> NoteStatus | None:
         )
         log_service_step("toggling repeat status", note_id=note_id, status=next_status)
         update_note_status(note_id, next_status)
+        event_bus.publish("notes_changed", {"note_id": note_id})
         return next_status
 
     next_status: NoteStatus = DONE_STATUS if note.status == ACTIVE_STATUS else ACTIVE_STATUS
@@ -226,7 +249,8 @@ def get_today_repeats() -> list[Note]:
 @log_service_call
 def delete(note_id: int) -> None:
     children_by_parent: dict[int, list[int]] = {}
-    for note in get_all_notes_flat():
+    notes_by_id = {note.id: note for note in get_all_notes_flat()}
+    for note in notes_by_id.values():
         if note.parent_note_id is None:
             continue
         children_by_parent.setdefault(note.parent_note_id, []).append(note.id)
@@ -238,5 +262,13 @@ def delete(note_id: int) -> None:
         to_delete.append(current)
         pending.extend(children_by_parent.get(current, []))
 
+    from services import recording_service
+
+    for current_id in to_delete:
+        note = notes_by_id.get(current_id)
+        if note is not None and note.audio_path:
+            recording_service.delete_audio_file(note.audio_path)
+
     delete_notes(to_delete)
     log_service_step("deleted notes", note_ids=to_delete)
+    event_bus.publish("notes_changed", {"note_ids": to_delete})

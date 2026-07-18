@@ -3,6 +3,7 @@
 import inspect
 import os
 from dataclasses import is_dataclass
+from enum import Enum
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
@@ -20,6 +21,32 @@ _SERVICE_COLORS = [
     "\033[33m",
 ]
 _LOG_ENABLED = os.getenv("SERVICE_LOG_ENABLED", "1").lower() not in {"0", "false", "no"}
+
+
+class ServiceName(str, Enum):
+    CAPTURE = "capture_service"
+    CAPTURE_QUEUE = "capture_queue_service"
+    NOTE = "note_service"
+    RECORDING = "recording_service"
+    COMMAND = "command_service"
+    CLASSIFICATION = "classification_service"
+    RELATIONSHIP = "relationship_service"
+    URGENCY = "urgency_service"
+    RECURRENCE = "recurrence_service"
+    LOCATION = "location_service"
+    GPS = "gps_service"
+    MODEL = "model_service"
+    ESTIMATE_DURATION = "estimate_duration_service"
+    FIXUP = "fixup_service"
+    EVENT_BUS = "event_bus"
+    NOTE_PIPELINE = "note_pipeline"
+
+
+# None = all services when master is on.
+# Example: {ServiceName.CAPTURE, ServiceName.URGENCY}
+SERVICE_LOG_ALLOWLIST: set[ServiceName] | None = None
+
+_SERVICE_BY_VALUE = {member.value: member for member in ServiceName}
 
 
 def _short_repr(value: Any, max_length: int = 500) -> str:
@@ -57,7 +84,21 @@ def _service_label(service_name: str) -> str:
     return f"{color}{_BOLD}[ {service_name} ]{_RESET}"
 
 
-def _caller_service_name() -> str:
+def _resolve_service(module_stem: str) -> ServiceName | None:
+    return _SERVICE_BY_VALUE.get(module_stem)
+
+
+def _should_log(service: ServiceName | None) -> bool:
+    if not _LOG_ENABLED:
+        return False
+    if SERVICE_LOG_ALLOWLIST is None:
+        return True
+    if service is None:
+        return False
+    return service in SERVICE_LOG_ALLOWLIST
+
+
+def _caller_module_stem() -> str:
     frame = inspect.currentframe()
     if frame is None or frame.f_back is None or frame.f_back.f_back is None:
         return "service"
@@ -66,15 +107,16 @@ def _caller_service_name() -> str:
 
 
 def log_service_step(message: str, **fields: Any) -> None:
-    if not _LOG_ENABLED:
+    module_stem = _caller_module_stem()
+    service = _resolve_service(module_stem)
+    if not _should_log(service):
         return
 
-    service_name = _caller_service_name()
     field_text = " ".join(
         f"{key}={_short_repr(value, 160)}" for key, value in fields.items()
     )
     suffix = f" {field_text}" if field_text else ""
-    print(f"{_service_label(service_name)} {_DIM}step{_RESET} {message}{suffix}", flush=True)
+    print(f"{_service_label(module_stem)} {_DIM}step{_RESET} {message}{suffix}", flush=True)
 
 
 def log_service_call(func: F) -> F:
@@ -82,11 +124,12 @@ def log_service_call(func: F) -> F:
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any):
-        if not _LOG_ENABLED:
+        module_stem = func.__module__.split(".")[-1]
+        service = _resolve_service(module_stem)
+        if not _should_log(service):
             return func(*args, **kwargs)
 
-        service_name = func.__module__.split(".")[-1]
-        label = _service_label(service_name)
+        label = _service_label(module_stem)
         print(f"{label} {_DIM}start{_RESET} {func.__name__}", flush=True)
         try:
             result = func(*args, **kwargs)

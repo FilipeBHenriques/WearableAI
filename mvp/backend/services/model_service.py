@@ -33,6 +33,7 @@ OLLAMA_MODEL_PREFERENCES = [
     "qwen2.5vl:3b",
     "gemma4:latest",
     "gpt-oss:20b",
+    # test minicpm5-1b
 ]
 
 for logger_name in (

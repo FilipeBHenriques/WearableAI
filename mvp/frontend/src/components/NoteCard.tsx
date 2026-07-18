@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Note } from "../types/note";
 import { LocationBadge } from "./LocationBadge";
+import { NoteAudioPlayer } from "./NoteAudioPlayer";
 import { UrgencyBadges } from "./UrgencyBadges";
 
 interface Props {
@@ -60,6 +61,7 @@ export function NoteCard({ note, onDelete, onToggleStatus, depth = 0 }: Props) {
         ) : null}
         <UrgencyBadges note={note} />
         <LocationBadge note={note} />
+        {note.audio_url ? <NoteAudioPlayer audioUrl={note.audio_url} /> : null}
         {hasSubnotes ? (
           <button
             className="subnotes-toggle"

@@ -180,7 +180,37 @@ def _extract_month_day(text: str) -> tuple[list[int] | None, list[int] | None]:
     return [day], [month]
 
 
+def _weekday_numbers(text: str) -> list[int]:
+    lowered = text.lower()
+    return sorted({number for name, number in WEEKDAY_NAMES.items() if re.search(rf"\b{name}\b", lowered)})
+
+
+def _has_repeat_signal(text: str) -> bool:
+    lowered = text.lower()
+    return bool(
+        re.search(
+            r"\b(every|each|repeat|repeating|recurring|daily|weekly|monthly|yearly|annually|weekdays|weekday|weekends|weekend)\b",
+            lowered,
+        )
+    )
+
+
+def _looks_like_one_time_deadline(text: str) -> bool:
+    lowered = text.lower()
+    return bool(
+        re.search(r"\b(by|before|due|deadline|deliver|finish|submit|complete)\b", lowered)
+        and re.search(r"\b(next\s+)?(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", lowered)
+    )
+
+
+def _should_reject_recurrence(text: str) -> bool:
+    return _looks_like_one_time_deadline(text) and not _has_repeat_signal(text) and len(_weekday_numbers(text)) <= 1
+
+
 def _heuristic(text: str) -> RecurrenceResult:
+    if _should_reject_recurrence(text):
+        return RecurrenceResult()
+
     lowered = text.lower()
     repeat_time = _extract_time(text)
 
@@ -190,8 +220,8 @@ def _heuristic(text: str) -> RecurrenceResult:
     if "weekday" in lowered or "weekdays" in lowered:
         return RecurrenceResult("weekly", [1, 2, 3, 4, 5], repeat_time=repeat_time)
 
-    week_days = sorted({number for name, number in WEEKDAY_NAMES.items() if re.search(rf"\b{name}\b", lowered)})
-    if week_days:
+    week_days = _weekday_numbers(text)
+    if week_days and (_has_repeat_signal(text) or len(week_days) > 1):
         return RecurrenceResult("weekly", week_days, repeat_time=repeat_time)
 
     monthly_match = re.search(r"\bevery\s+month\s+(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b", lowered)
@@ -242,7 +272,7 @@ def analyze_text(text: str, captured_at: datetime | None = None) -> RecurrenceRe
         )
         parsed = extract_json_object(raw_text)
         result = _from_parsed(parsed)
-        if result.repeat_cycle is not None:
+        if result.repeat_cycle is not None and not _should_reject_recurrence(text):
             log_service_step("llm recurrence selected", result=result)
             return result
     except Exception as exc:

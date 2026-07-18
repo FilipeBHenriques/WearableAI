@@ -9,6 +9,21 @@ class TextInput(BaseModel):
     text: str
 
 
+class RecordingJobResult(BaseModel):
+    job_id: int
+    status: str
+
+
+class CaptureJobResponse(BaseModel):
+    id: int
+    status: str
+    final_transcript: str | None = None
+    note_id: int | None = None
+    error: str | None = None
+    created_at: str
+    updated_at: str
+
+
 class CaptureResult(BaseModel):
     id: int | None = None
     text: str
@@ -32,6 +47,9 @@ class CaptureResult(BaseModel):
     is_due_today: bool = False
     completed_today: bool = False
     repeat_display: str | None = None
+    estimated_duration_minutes: int | None = None
+    audio_path: str | None = None
+    audio_url: str | None = None
     saved: bool
     command_processed: bool = False
     command_type: str | None = None
@@ -62,6 +80,9 @@ class NoteResponse(BaseModel):
     is_due_today: bool = False
     completed_today: bool = False
     repeat_display: str | None = None
+    estimated_duration_minutes: int | None = None
+    audio_path: str | None = None
+    audio_url: str | None = None
 
 
 class NoteDetailResponse(NoteResponse):

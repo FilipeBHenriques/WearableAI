@@ -1,15 +1,17 @@
+import asyncio
+import json
 import os
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db
 from paths import ASSETS_DIR, DIST_DIR
 from models import NoteStatus
-from schemas import LocationResponse, NoteDetailResponse, NoteResponse, NoteStatusInput, TextInput
-from services import capture_service, location_service, model_service, note_service, recurrence_service, recording_service
+from schemas import CaptureJobResponse, LocationResponse, NoteStatusInput, RecordingJobResult, TextInput
+from services import capture_queue_service, capture_service, event_bus, location_service, model_service, note_service, recording_service, recurrence_service
 
 app = FastAPI()
 init_db()
@@ -38,6 +40,12 @@ def api_health():
 
 
 NoteQueryStatus = Literal["active", "done", "all"]
+
+
+def _audio_url(note) -> str | None:
+    if not note.audio_path:
+        return None
+    return f"/api/notes/{note.id}/audio"
 
 
 def _serialize_note_tree(note_id: int, status: NoteStatus | None = None):
@@ -73,6 +81,9 @@ def _serialize_note(note, status: NoteStatus | None = None):
         "is_due_today": recurrence_service.is_due_on(note),
         "completed_today": recurrence_service.completed_on(note),
         "repeat_display": recurrence_service.repeat_display(note),
+        "estimated_duration_minutes": note.estimated_duration_minutes,
+        "audio_path": note.audio_path,
+        "audio_url": _audio_url(note),
         "subnotes": [
             _serialize_note_tree(subnote.id, status)
             for subnote in note_service.get_subnotes(note.id, status)
@@ -87,6 +98,37 @@ def index():
         return dist_index.read_text(encoding="utf-8")
     return HTMLResponse(
         "<h2>Run <code>cd frontend && npm run build</code> to serve the UI.</h2>"
+    )
+
+
+@app.get("/api/events")
+async def api_events():
+    queue = event_bus.subscribe()
+
+    async def stream():
+        try:
+            yield "event: connected\ndata: {}\n\n"
+            while True:
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+
+                event_type = message.get("type", "message")
+                payload = message.get("payload", {})
+                yield f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+        finally:
+            event_bus.unsubscribe(queue)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -123,6 +165,18 @@ def api_get_note(note_id: int):
     return note_tree
 
 
+@app.get("/api/notes/{note_id}/audio")
+def api_note_audio(note_id: int):
+    note = note_service.get_by_id(note_id)
+    if note is None or not note.audio_path:
+        raise HTTPException(status_code=404, detail="Audio not found")
+
+    audio_file = recording_service.resolve_audio_path(note.audio_path)
+    if not audio_file.is_file():
+        raise HTTPException(status_code=404, detail="Audio file missing")
+    return FileResponse(audio_file, media_type="audio/wav", filename=f"note-{note_id}.wav")
+
+
 @app.delete("/api/notes/{note_id}")
 def api_delete_note(note_id: int):
     note_service.delete(note_id)
@@ -149,14 +203,29 @@ def api_toggle_note_status(note_id: int):
 
 
 @app.post("/api/record/start")
-def api_record_start():
-    recording_service.start_recording()
-    return {"status": "recording"}
+def api_record_start() -> RecordingJobResult:
+    try:
+        job = capture_queue_service.start_recording_job()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"job_id": job.id, "status": job.status}
 
 
 @app.post("/api/record/stop")
-def api_record_stop():
-    return capture_service.stop_and_save()
+def api_record_stop() -> RecordingJobResult:
+    try:
+        job = capture_queue_service.stop_recording_job()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"job_id": job.id, "status": job.status}
+
+
+@app.get("/api/capture/jobs/active", response_model=list[CaptureJobResponse])
+def api_active_capture_jobs():
+    return [
+        capture_queue_service.serialize_job(job)
+        for job in capture_queue_service.active_jobs()
+    ]
 
 
 @app.post("/api/text")

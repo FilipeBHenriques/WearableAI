@@ -1,11 +1,15 @@
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+
 import database
+from schemas import CaptureResult
 from services.llm_utils import extract_json_object
-from services import capture_service, command_service, location_service, note_service, recurrence_service, urgency_service
+from services import capture_queue_service, capture_service, command_service, location_service, note_service, recurrence_service, urgency_service
 
 
 class LocationCaptureTests(unittest.TestCase):
@@ -201,6 +205,36 @@ class LocationCaptureTests(unittest.TestCase):
         self.assertEqual(result.repeat_days, [1, 3, 5])
         self.assertEqual(result.repeat_time, "18:00")
 
+    def test_recurrence_rejects_one_time_next_week_deadline(self):
+        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
+            result = recurrence_service.analyze_text("We need to deliver this homework by next Friday.")
+
+        self.assertIsNone(result.repeat_cycle)
+
+    def test_recurrence_rejects_bad_llm_repeat_for_one_time_deadline(self):
+        with patch("services.model_service.generate_llm", return_value='{"is_repeating":true,"repeat_cycle":"daily","repeat_days":null,"repeat_months":null,"repeat_time":null}'):
+            result = recurrence_service.analyze_text("I need to finish this by next Thursday.")
+
+        self.assertIsNone(result.repeat_cycle)
+
+    def test_urgency_corrects_next_weekday_deadlines(self):
+        note_id, _ = note_service.save("We need to deliver this homework by next Friday.")
+        note = note_service.get_by_id(note_id)
+
+        with patch("services.model_service.generate_llm", return_value='{"has_deadline":true,"deadline_at":"2026-07-23T23:59","importance_score":4,"reason":"deadline"}'):
+            result = urgency_service.analyze_note(note, datetime.fromisoformat("2026-07-18T15:00:00+01:00"))
+
+        self.assertEqual(result.deadline_at, "2026-07-24T23:59")
+
+    def test_urgency_corrects_next_thursday_deadline(self):
+        note_id, _ = note_service.save("I need to finish this by next Thursday.")
+        note = note_service.get_by_id(note_id)
+
+        with patch("services.model_service.generate_llm", return_value='{"has_deadline":true,"deadline_at":"2026-07-22T23:59","importance_score":3,"reason":"deadline"}'):
+            result = urgency_service.analyze_note(note, datetime.fromisoformat("2026-07-18T15:00:00+01:00"))
+
+        self.assertEqual(result.deadline_at, "2026-07-23T23:59")
+
     def test_recurrence_fallback_detects_monthly_repeat(self):
         with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
             result = recurrence_service.analyze_text("pay rent every month on the 1st")
@@ -256,6 +290,72 @@ class LocationCaptureTests(unittest.TestCase):
 
         self.assertEqual(status, "done")
         self.assertEqual(note_service.get_by_id(note_id).status, "done")
+
+    def test_capture_queue_start_creates_recording_job(self):
+        with patch("services.recording_service.start_recording") as start_recording:
+            job = capture_queue_service.start_recording_job()
+
+        start_recording.assert_called_once_with(job.id)
+        self.assertEqual(job.status, "recording")
+        self.assertEqual(capture_queue_service.active_jobs()[0].id, job.id)
+
+    def test_capture_queue_stop_returns_transcribing_without_running_worker_inline(self):
+        job = database.create_capture_job("recording")
+
+        with (
+            patch("services.recording_service.active_job_id", return_value=job.id),
+            patch("services.recording_service.stop_and_get_audio", return_value=np.array([0.1], dtype=np.float32)),
+            patch("services.capture_queue_service.threading.Thread") as thread_cls,
+        ):
+            stopped = capture_queue_service.stop_recording_job()
+
+        self.assertEqual(stopped.status, "transcribing")
+        thread_cls.return_value.start.assert_called_once()
+
+    def test_capture_worker_saves_raw_note_before_enrichment(self):
+        job = database.create_capture_job("recording")
+        seen_note_ids: list[int] = []
+
+        def fake_enrich(note_id: int):
+            seen_note_ids.append(note_id)
+            self.assertIsNotNone(note_service.get_by_id(note_id))
+            return CaptureResult(id=note_id, text="remember this", category="Task", saved=True)
+
+        with (
+            patch("services.recording_service.transcribe_audio", return_value="remember this"),
+            patch("services.fixup_service.fix_transcript", side_effect=lambda text: text),
+            patch("services.command_service.detect_command", return_value=command_service.Command(type=command_service.CommandType.TAKE_NOTE)),
+            patch("services.note_pipeline.run_enrich", side_effect=fake_enrich),
+        ):
+            capture_queue_service._process_audio_job(job.id, np.array([0.1], dtype=np.float32))
+
+        updated = capture_queue_service.get_job(job.id)
+        self.assertEqual(updated.status, "ready")
+        self.assertIsNotNone(updated.note_id)
+        self.assertEqual(seen_note_ids, [updated.note_id])
+        self.assertEqual(note_service.get_by_id(updated.note_id).text, "remember this")
+
+    def test_capture_active_jobs_hide_ready_jobs(self):
+        ready = database.create_capture_job("recording")
+        active = database.create_capture_job("recording")
+        database.update_capture_job(ready.id, status="ready")
+
+        active_ids = {job.id for job in capture_queue_service.active_jobs()}
+
+        self.assertIn(active.id, active_ids)
+        self.assertNotIn(ready.id, active_ids)
+
+    def test_capture_job_serialization_contains_queue_fields(self):
+        job = database.create_capture_job("recording")
+        database.update_capture_job(job.id, final_transcript="hello")
+        updated = capture_queue_service.get_job(job.id)
+
+        payload = capture_queue_service.serialize_job(updated)
+
+        self.assertEqual(payload["id"], 1)
+        self.assertEqual(payload["status"], "recording")
+        self.assertEqual(payload["final_transcript"], "hello")
+        self.assertIn("updated_at", payload)
 
 
 if __name__ == "__main__":

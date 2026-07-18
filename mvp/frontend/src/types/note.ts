@@ -35,6 +35,9 @@ export interface Note {
   is_due_today: boolean;
   completed_today: boolean;
   repeat_display: string | null;
+  estimated_duration_minutes: number | null;
+  audio_path: string | null;
+  audio_url: string | null;
   subnotes?: Note[];
 }
 
@@ -61,10 +64,36 @@ export interface RecordResult {
   is_due_today: boolean;
   completed_today: boolean;
   repeat_display: string | null;
+  estimated_duration_minutes: number | null;
+  audio_path: string | null;
+  audio_url: string | null;
   saved: boolean;
   command_processed: boolean;
   command_type: string | null;
   message: string | null;
+}
+
+export interface RecordingJobResult {
+  job_id: number;
+  status: string;
+}
+
+export type CaptureJobStatus =
+  | "recording"
+  | "transcribing"
+  | "saved_raw"
+  | "enriching"
+  | "ready"
+  | "failed";
+
+export interface CaptureJob {
+  id: number;
+  status: CaptureJobStatus;
+  final_transcript: string | null;
+  note_id: number | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface NoteStatusResult {

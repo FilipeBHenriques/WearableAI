@@ -1,12 +1,23 @@
 """Detects note deadlines and ranks urgency/importance."""
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
+import re
 
 from models import Note
 from services.llm_utils import extract_json_object
 from services import model_service, note_service
 from services.service_logger import log_service_call, log_service_step
+
+WEEKDAY_NAMES = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
 
 
 @dataclass
@@ -36,7 +47,27 @@ def _parse_deadline(value: str | None) -> datetime | None:
         return None
 
 
-def _calculate_urgency(deadline_at: str | None, now: datetime) -> int:
+def _relative_weekday_deadline(text: str, captured_at: datetime) -> datetime | None:
+    weekday_pattern = "|".join(WEEKDAY_NAMES)
+    match = re.search(rf"\b(?:by|before|due|deadline|deliver|finish|submit|complete)?\s*(next\s+)?({weekday_pattern})\b", text, re.IGNORECASE)
+    if not match:
+        return None
+
+    has_next = bool(match.group(1))
+    target_weekday = WEEKDAY_NAMES[match.group(2).lower()]
+    current_weekday = captured_at.weekday()
+    days_ahead = (target_weekday - current_weekday) % 7
+    if has_next or days_ahead == 0:
+        days_ahead = days_ahead or 7
+
+    return datetime.combine((captured_at + timedelta(days=days_ahead)).date(), time(23, 59))
+
+
+def _calculate_urgency(
+    deadline_at: str | None,
+    now: datetime,
+    estimated_duration_minutes: int | None = None,
+) -> int:
     deadline = _parse_deadline(deadline_at)
     if deadline is None:
         return 0
@@ -46,21 +77,28 @@ def _calculate_urgency(deadline_at: str | None, now: datetime) -> int:
     now = now.astimezone().replace(tzinfo=None) if now.tzinfo is not None else now
 
     hours_until_due = (deadline - now).total_seconds() / 3600
-    if hours_until_due < 0:
+    if estimated_duration_minutes is not None:
+        slack_hours = hours_until_due - (estimated_duration_minutes / 60)
+        return _score_from_hours(slack_hours)
+    return _score_from_hours(hours_until_due)
+
+
+def _score_from_hours(hours: float) -> int:
+    if hours < 0:
         return 100
-    if hours_until_due <= 2:
+    if hours <= 2:
         return 98
-    if hours_until_due <= 6:
+    if hours <= 6:
         return 95
-    if hours_until_due <= 24:
+    if hours <= 24:
         return 90
-    if hours_until_due <= 72:
+    if hours <= 72:
         return 80
-    if hours_until_due <= 168:
+    if hours <= 168:
         return 65
-    if hours_until_due <= 336:
+    if hours <= 336:
         return 45
-    if hours_until_due <= 720:
+    if hours <= 720:
         return 25
     return 10
 
@@ -122,6 +160,9 @@ def analyze_note(note: Note, captured_at: datetime | None = None) -> UrgencyResu
     has_deadline = bool(parsed.get("has_deadline"))
     deadline_at = str(parsed.get("deadline_at") or parsed.get("deadline_date") or "").strip() if has_deadline else None
     parsed_deadline = _parse_deadline(deadline_at)
+    relative_deadline = _relative_weekday_deadline(note.text, captured_at) if has_deadline else None
+    if relative_deadline is not None:
+        parsed_deadline = relative_deadline
     deadline_at = parsed_deadline.isoformat(timespec="minutes") if parsed_deadline else None
 
     try:
@@ -130,13 +171,18 @@ def analyze_note(note: Note, captured_at: datetime | None = None) -> UrgencyResu
         importance_score = 1
 
     importance_score = _clamp(importance_score, 1, 5)
-    urgency_score = _calculate_urgency(deadline_at, captured_at)
+    urgency_score = _calculate_urgency(
+        deadline_at,
+        captured_at,
+        note.estimated_duration_minutes,
+    )
     rank_score = _calculate_rank(importance_score, urgency_score)
     urgency_reason = str(parsed.get("reason") or "").strip() or None
     log_service_step(
         "urgency scores calculated",
         note_id=note.id,
         deadline_at=deadline_at,
+        estimated_duration_minutes=note.estimated_duration_minutes,
         importance_score=importance_score,
         urgency_score=urgency_score,
         rank_score=rank_score,
@@ -168,3 +214,40 @@ def apply_urgency(note: Note, captured_at: datetime | None = None) -> UrgencyRes
     note.rank_score = result.rank_score
     note.urgency_reason = result.urgency_reason
     return result
+
+
+@log_service_call
+def refresh_scores(note: Note, captured_at: datetime | None = None) -> UrgencyResult:
+    """Recalculate urgency/rank from existing deadline + duration (no LLM)."""
+    captured_at = captured_at or datetime.now().astimezone()
+    urgency_score = _calculate_urgency(
+        note.deadline_at,
+        captured_at,
+        note.estimated_duration_minutes,
+    )
+    rank_score = _calculate_rank(note.importance_score, urgency_score)
+    note_service.update_urgency(
+        note.id,
+        note.deadline_at,
+        note.importance_score,
+        urgency_score,
+        rank_score,
+        note.urgency_reason,
+    )
+    note.urgency_score = urgency_score
+    note.rank_score = rank_score
+    log_service_step(
+        "urgency scores refreshed",
+        note_id=note.id,
+        deadline_at=note.deadline_at,
+        estimated_duration_minutes=note.estimated_duration_minutes,
+        urgency_score=urgency_score,
+        rank_score=rank_score,
+    )
+    return UrgencyResult(
+        deadline_at=note.deadline_at,
+        importance_score=note.importance_score,
+        urgency_score=urgency_score,
+        rank_score=rank_score,
+        urgency_reason=note.urgency_reason,
+    )

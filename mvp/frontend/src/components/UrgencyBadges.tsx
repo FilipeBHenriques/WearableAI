@@ -1,7 +1,14 @@
 import type { Note } from "../types/note";
 
 interface Props {
-  note: Pick<Note, "deadline_at" | "importance_score" | "urgency_score" | "urgency_reason">;
+  note: Pick<
+    Note,
+    | "deadline_at"
+    | "importance_score"
+    | "urgency_score"
+    | "urgency_reason"
+    | "estimated_duration_minutes"
+  >;
 }
 
 function formatDeadline(value: string) {
@@ -17,12 +24,26 @@ function formatDeadline(value: string) {
   });
 }
 
+function formatDuration(minutes: number) {
+  if (minutes <= 0) return "Est. —";
+  if (minutes < 60) return `Est. ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (remainder === 0) return `Est. ${hours}h`;
+  return `Est. ${hours}h ${remainder}m`;
+}
+
 export function UrgencyBadges({ note }: Props) {
   return (
     <div className="urgency-badges" aria-label="Urgency details">
       {note.deadline_at ? (
         <span className="urgency-badge urgency-badge--deadline">
           Due {formatDeadline(note.deadline_at)}
+        </span>
+      ) : null}
+      {note.estimated_duration_minutes != null ? (
+        <span className="urgency-badge urgency-badge--duration">
+          {formatDuration(note.estimated_duration_minutes)}
         </span>
       ) : null}
       <span className="urgency-badge">Importance {note.importance_score}</span>

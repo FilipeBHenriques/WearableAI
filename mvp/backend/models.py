@@ -3,6 +3,7 @@ from typing import Literal
 
 NoteStatus = str
 RepeatCycle = Literal["daily", "weekly", "monthly", "yearly"]
+CaptureJobStatus = Literal["recording", "transcribing", "saved_raw", "enriching", "ready", "failed"]
 
 
 @dataclass
@@ -36,3 +37,16 @@ class Note:
     repeat_days: list[int] | None = None
     repeat_months: list[int] | None = None
     repeat_time: str | None = None
+    estimated_duration_minutes: int | None = None
+    audio_path: str | None = None
+
+
+@dataclass
+class CaptureJob:
+    id: int
+    status: CaptureJobStatus
+    final_transcript: str | None
+    note_id: int | None
+    error: str | None
+    created_at: str
+    updated_at: str

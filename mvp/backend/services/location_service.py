@@ -4,7 +4,7 @@ import numpy as np
 
 from database import delete_location, get_all_locations, update_note_location, upsert_location
 from models import Location, Note
-from services import model_service
+from services import event_bus, model_service
 from services.llm_utils import extract_json_object
 from services.service_logger import log_service_call, log_service_step
 
@@ -40,7 +40,9 @@ def save_current_location(name: str, latitude: float, longitude: float) -> Locat
         latitude=latitude,
         longitude=longitude,
     )
-    return upsert_location(location_name, latitude, longitude)
+    location = upsert_location(location_name, latitude, longitude)
+    event_bus.publish("locations_changed", {"location_id": location.id})
+    return location
 
 
 @log_service_call
@@ -54,6 +56,9 @@ def get_locations() -> list[Location]:
 def delete_saved_location(location_id: int) -> bool:
     deleted = delete_location(location_id)
     log_service_step("deleted location", location_id=location_id, deleted=deleted)
+    if deleted:
+        event_bus.publish("locations_changed", {"location_id": location_id})
+        event_bus.publish("notes_changed", {"reason": "location_deleted"})
     return deleted
 
 

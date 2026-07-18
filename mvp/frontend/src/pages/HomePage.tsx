@@ -9,12 +9,14 @@ import {
 } from "../api/notesApi";
 import { LocationBadge } from "../components/LocationBadge";
 import { LocationsDebugPanel } from "../components/LocationsDebugPanel";
+import { NoteAudioPlayer } from "../components/NoteAudioPlayer";
 import { RecordButton } from "../components/RecordButton";
+import { useCaptureJobs } from "../hooks/useCaptureJobs";
 import { UrgencyBadges } from "../components/UrgencyBadges";
 import { useNotes } from "../hooks/useNotes";
 import { useRecording } from "../hooks/useRecording";
 import { useTodayRepeats } from "../hooks/useTodayRepeats";
-import type { Location, Note, RecordResult } from "../types/note";
+import type { CaptureJob, Location, Note, RecordingJobResult } from "../types/note";
 
 type Screen = "main" | "notes" | "locations";
 type NotesMode = "notes" | "goals";
@@ -39,7 +41,8 @@ export function HomePage() {
   const selectedNote = selectedNoteId == null ? null : flatNotes.find((note) => note.id === selectedNoteId) ?? null;
   const normalNotes = allNotes.filter((note) => !note.is_repeating);
   const goals = flatNotes.filter((note) => note.is_repeating);
-  const suggestions = activeNotes
+  const suggestions = flatNotes
+    .filter((note) => note.status === "active")
     .sort(sortByRank)
     .slice(0, 5);
 
@@ -77,18 +80,39 @@ export function HomePage() {
     setLocations(await fetchLocations());
   }, []);
 
+  const handleJobUpdated = useCallback(
+    async (job: CaptureJob) => {
+      if (
+        job.status === "saved_raw" ||
+        job.status === "enriching" ||
+        job.status === "ready"
+      ) {
+        await reloadEverything();
+      }
+      if (job.status === "ready" || job.status === "failed") {
+        await reloadLocations();
+      }
+    },
+    [reloadEverything, reloadLocations],
+  );
+
+  const { jobs: captureJobs, reloadJobs } = useCaptureJobs({
+    onJobUpdated: handleJobUpdated,
+    onNotesChanged: reloadEverything,
+    onLocationsChanged: reloadLocations,
+  });
+
   useEffect(() => {
     reloadAllNotes().catch(() => setAllNotes([]));
     reloadLocations().catch(() => setLocations([]));
   }, [reloadAllNotes, reloadLocations]);
 
   const handleStopped = useCallback(
-    async (result: RecordResult) => {
+    async (_result: RecordingJobResult) => {
       await reloadLocations();
-      if (!result.saved || result.id == null) return;
-      await reloadEverything();
+      await reloadJobs();
     },
-    [reloadEverything, reloadLocations],
+    [reloadJobs, reloadLocations],
   );
 
   const { state, handleStart, handleStop } = useRecording(handleStopped);
@@ -258,6 +282,8 @@ export function HomePage() {
           </div>
         </section>
 
+        <CaptureQueueTray jobs={captureJobs} />
+
         <aside className="hardware-rec">
           <RecordButton state={state} onStart={handleStart} onStop={handleStop} />
         </aside>
@@ -268,6 +294,33 @@ export function HomePage() {
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return <section className="panel"><h1>{title}</h1>{children}</section>;
+}
+
+function CaptureQueueTray({ jobs }: { jobs: CaptureJob[] }) {
+  return (
+    <div className={jobs.length === 0 ? "capture-queue capture-queue--empty" : "capture-queue"} aria-label="Active capture queue">
+      {jobs.length === 0 ? null : (
+        jobs.map((job) => (
+          <div className="capture-job" key={job.id}>
+            <div className="capture-job__topline">
+              <span>JOB {job.id}</span>
+              <strong>{job.status.replace("_", " ")}</strong>
+            </div>
+            <p>{job.error ?? job.final_transcript ?? queueStatusText(job.status)}</p>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function queueStatusText(status: CaptureJob["status"]) {
+  if (status === "recording") return "Recording audio...";
+  if (status === "transcribing") return "Transcribing recording...";
+  if (status === "saved_raw") return "Raw note saved.";
+  if (status === "enriching") return "Categorizing and ranking...";
+  if (status === "failed") return "Capture failed.";
+  return "Finishing...";
 }
 
 function TaskRow({
@@ -425,6 +478,7 @@ function NoteDetail({
         {note.repeat_display ? <span className="repeat-badge">{note.repeat_display}</span> : null}
         <UrgencyBadges note={note} />
         <LocationBadge note={note} />
+        {note.audio_url ? <NoteAudioPlayer audioUrl={note.audio_url} /> : null}
       </section>
 
       <section className="panel">

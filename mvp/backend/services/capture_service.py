@@ -1,155 +1,38 @@
-"""Coordinates the full capture workflow."""
+"""Voice/text capture entrypoints — delegates processing to note_pipeline.
+
+Recording I/O lives in recording_service. Job queue lives in capture_queue_service.
+Command detection, save, and enrichment order live in note_pipeline.
+"""
 
 from schemas import CaptureResult
-from services import (
-    classification_service,
-    command_service,
-    gps_service,
-    location_service,
-    note_service,
-    recurrence_service,
-    recording_service,
-    relationship_service,
-    urgency_service,
-)
-from services.service_logger import log_service_call, log_service_step
+from services import note_pipeline, recording_service
+from services.service_logger import log_service_call
+
+
+@log_service_call
+def save_raw_note_text(text: str) -> CaptureResult:
+    return note_pipeline.run_intake(text)
+
+
+@log_service_call
+def enrich_note(note_id: int) -> CaptureResult:
+    return note_pipeline.run_enrich(note_id)
 
 
 @log_service_call
 def process_note_text(text: str) -> CaptureResult:
-    text = text.strip()
-    if not text:
-        log_service_step("empty text ignored")
-        return CaptureResult(text="", category=None, saved=False)
-
-    command = command_service.detect_command(text)
-    log_service_step("command detected", command=command.type.value, location_name=command.location_name)
-    if command.type == command_service.CommandType.SAVE_LOCATION:
-        if command.location_name is None:
-            return CaptureResult(
-                text=text,
-                category=None,
-                saved=False,
-                command_processed=True,
-                command_type=command.type.value,
-                message="Could not identify the location name.",
-            )
-
-        coordinates = gps_service.get_current_coordinates()
-        location = location_service.save_current_location(
-            command.location_name,
-            coordinates.latitude,
-            coordinates.longitude,
-        )
-        return CaptureResult(
-            text=text,
-            category=None,
-            saved=False,
-            command_processed=True,
-            command_type=command.type.value,
-            location_id=location.id,
-            location_name=location.name,
-            location_latitude=location.latitude,
-            location_longitude=location.longitude,
-            message=f"Saved location '{location.name}'.",
-        )
-
-    note_id, created_at = note_service.save(text)
-    log_service_step("note saved", note_id=note_id)
-    note = note_service.get_by_id(note_id)
-    if note is None:
-        return CaptureResult(text=text, category=None, saved=False)
-
-    try:
-        note = relationship_service.apply_relationship(note)
-    except Exception as exc:
-        log_service_step("relationship failed", note_id=note_id, error=repr(exc))
-
-    category = note.category
-    try:
-        category = classification_service.classify_text(note.text)
-        note_service.update_category(note_id, category)
-        note.category = category
-    except Exception as exc:
-        log_service_step("classification failed", note_id=note_id, error=repr(exc))
-
-    urgency = urgency_service.UrgencyResult(
-        deadline_at=note.deadline_at,
-        importance_score=note.importance_score,
-        urgency_score=note.urgency_score,
-        rank_score=note.rank_score,
-        urgency_reason=note.urgency_reason,
-    )
-    try:
-        urgency = urgency_service.apply_urgency(note)
-    except Exception as exc:
-        log_service_step("urgency failed", note_id=note_id, error=repr(exc))
-
-    try:
-        location_service.apply_location(note)
-    except Exception as exc:
-        log_service_step("location failed", note_id=note_id, error=repr(exc))
-
-    recurrence = recurrence_service.RecurrenceResult()
-    try:
-        recurrence = recurrence_service.analyze_text(note.text)
-        if recurrence.repeat_cycle is not None:
-            note_service.update_recurrence(
-                note_id,
-                recurrence.repeat_cycle,
-                recurrence.repeat_days,
-                recurrence.repeat_months,
-                recurrence.repeat_time,
-            )
-            note_service.update_category(note_id, "Goal")
-            note.repeat_cycle = recurrence.repeat_cycle
-            note.repeat_days = recurrence.repeat_days
-            note.repeat_months = recurrence.repeat_months
-            note.repeat_time = recurrence.repeat_time
-            note.category = "Goal"
-            category = note.category
-    except Exception as exc:
-        log_service_step("recurrence failed", note_id=note_id, error=repr(exc))
-
-    return CaptureResult(
-        id=note_id,
-        text=text,
-        category=category,
-        created_at=created_at,
-        status=note.status,
-        deadline_at=urgency.deadline_at,
-        importance_score=urgency.importance_score,
-        urgency_score=urgency.urgency_score,
-        rank_score=urgency.rank_score,
-        urgency_reason=urgency.urgency_reason,
-        location_id=note.location_id,
-        location_name=note.location_name,
-        location_latitude=note.location_latitude,
-        location_longitude=note.location_longitude,
-        repeat_cycle=note.repeat_cycle,
-        repeat_days=note.repeat_days,
-        repeat_months=note.repeat_months,
-        repeat_time=note.repeat_time,
-        is_repeating=recurrence_service.is_repeating(note),
-        is_due_today=recurrence_service.is_due_on(note),
-        completed_today=recurrence_service.completed_on(note),
-        repeat_display=recurrence_service.repeat_display(note),
-        saved=True,
-        command_processed=True,
-        command_type=command.type.value,
-    )
+    return note_pipeline.process_text(text)
 
 
 @log_service_call
 def stop_and_save() -> CaptureResult:
-    """Stop the active recording, transcribe, process, and save."""
+    """Stop the active recording, transcribe, and run the note pipeline."""
     text = recording_service.stop_and_transcribe().strip()
     if not text:
         return CaptureResult(text="", category=None, saved=False)
-    return process_note_text(text)
+    return note_pipeline.process_text(text)
 
 
 @log_service_call
 def process_text(raw: str) -> CaptureResult:
-    """Process plain-text input through the full note pipeline."""
-    return process_note_text(raw)
+    return note_pipeline.process_text(raw)

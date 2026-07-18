@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { deleteNote, fetchNote } from "../api/notesApi";
 import { LocationBadge } from "../components/LocationBadge";
+import { NoteAudioPlayer } from "../components/NoteAudioPlayer";
 import { UrgencyBadges } from "../components/UrgencyBadges";
 import type { Note } from "../types/note";
 
@@ -57,6 +58,7 @@ export function NoteDetailPage() {
       {note.repeat_display ? <span className="repeat-badge">{note.repeat_display}</span> : null}
       <UrgencyBadges note={note} />
       <LocationBadge note={note} />
+      {note.audio_url ? <NoteAudioPlayer audioUrl={note.audio_url} /> : null}
 
       <section className="subnotes-section">
         <div className="subnotes-header">
@@ -77,6 +79,7 @@ export function NoteDetailPage() {
                 <span className="note-date">{subnote.created_at}</span>
                 <UrgencyBadges note={subnote} />
                 <LocationBadge note={subnote} />
+                {subnote.audio_url ? <NoteAudioPlayer audioUrl={subnote.audio_url} /> : null}
               </div>
             ))}
           </div>

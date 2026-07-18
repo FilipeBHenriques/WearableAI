@@ -2,7 +2,7 @@ import json
 import sqlite3
 from datetime import datetime
 
-from models import Location, Note, NoteStatus
+from models import CaptureJob, CaptureJobStatus, Location, Note, NoteStatus
 from paths import DB_PATH
 
 
@@ -43,6 +43,17 @@ def init_db():
             updated_at  TEXT    NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS capture_jobs (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            status             TEXT    NOT NULL,
+            final_transcript   TEXT,
+            note_id            INTEGER REFERENCES notes(id),
+            error              TEXT,
+            created_at         TEXT    NOT NULL,
+            updated_at         TEXT    NOT NULL
+        )
+    """)
     _migrate_schema(conn)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_notes_parent_note_id ON notes(parent_note_id)"
@@ -55,6 +66,9 @@ def init_db():
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_locations_name ON locations(name)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_capture_jobs_status ON capture_jobs(status, id DESC)"
     )
     conn.commit()
     conn.close()
@@ -69,6 +83,10 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     note_columns = _table_columns(conn, "notes")
     if "location_id" not in note_columns:
         conn.execute("ALTER TABLE notes ADD COLUMN location_id INTEGER REFERENCES locations(id)")
+    if "estimated_duration_minutes" not in note_columns:
+        conn.execute("ALTER TABLE notes ADD COLUMN estimated_duration_minutes INTEGER")
+    if "audio_path" not in note_columns:
+        conn.execute("ALTER TABLE notes ADD COLUMN audio_path TEXT")
 
 
 def save_note(text: str, category: str) -> tuple[int, str]:
@@ -162,11 +180,126 @@ def update_note_urgency(
     conn.close()
 
 
+def update_note_estimated_duration(note_id: int, estimated_duration_minutes: int | None) -> None:
+    conn = _connect()
+    conn.execute(
+        "UPDATE notes SET estimated_duration_minutes = ? WHERE id = ?",
+        (estimated_duration_minutes, note_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_note_audio_path(note_id: int, audio_path: str | None) -> None:
+    conn = _connect()
+    conn.execute(
+        "UPDATE notes SET audio_path = ? WHERE id = ?",
+        (audio_path, note_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def update_note_location(note_id: int, location_id: int | None) -> None:
     conn = _connect()
     conn.execute("UPDATE notes SET location_id = ? WHERE id = ?", (location_id, note_id))
     conn.commit()
     conn.close()
+
+
+def create_capture_job(status: CaptureJobStatus = "recording") -> CaptureJob:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = _connect()
+    cur = conn.execute(
+        """
+        INSERT INTO capture_jobs (status, created_at, updated_at)
+        VALUES (?, ?, ?)
+        """,
+        (status, now, now),
+    )
+    job_id = cur.lastrowid
+    conn.commit()
+    row = conn.execute(
+        """
+        SELECT id, status, final_transcript, note_id, error, created_at, updated_at
+        FROM capture_jobs
+        WHERE id = ?
+        """,
+        (job_id,),
+    ).fetchone()
+    conn.close()
+    return _row_to_capture_job(row)
+
+
+def update_capture_job(
+    job_id: int,
+    *,
+    status: CaptureJobStatus | None = None,
+    final_transcript: str | None = None,
+    note_id: int | None = None,
+    error: str | None = None,
+) -> CaptureJob | None:
+    assignments = ["updated_at = ?"]
+    params: list[object] = [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+
+    if status is not None:
+        assignments.append("status = ?")
+        params.append(status)
+    if final_transcript is not None:
+        assignments.append("final_transcript = ?")
+        params.append(final_transcript)
+    if note_id is not None:
+        assignments.append("note_id = ?")
+        params.append(note_id)
+    if error is not None:
+        assignments.append("error = ?")
+        params.append(error)
+
+    params.append(job_id)
+    conn = _connect()
+    conn.execute(
+        f"UPDATE capture_jobs SET {', '.join(assignments)} WHERE id = ?",
+        params,
+    )
+    conn.commit()
+    row = conn.execute(
+        """
+        SELECT id, status, final_transcript, note_id, error, created_at, updated_at
+        FROM capture_jobs
+        WHERE id = ?
+        """,
+        (job_id,),
+    ).fetchone()
+    conn.close()
+    return _row_to_capture_job(row) if row is not None else None
+
+
+def get_capture_job(job_id: int) -> CaptureJob | None:
+    conn = _connect()
+    row = conn.execute(
+        """
+        SELECT id, status, final_transcript, note_id, error, created_at, updated_at
+        FROM capture_jobs
+        WHERE id = ?
+        """,
+        (job_id,),
+    ).fetchone()
+    conn.close()
+    return _row_to_capture_job(row) if row is not None else None
+
+
+def get_active_capture_jobs() -> list[CaptureJob]:
+    conn = _connect()
+    rows = conn.execute(
+        """
+        SELECT id, status, final_transcript, note_id, error, created_at, updated_at
+        FROM capture_jobs
+        WHERE status IN ('recording', 'transcribing', 'saved_raw', 'enriching', 'failed')
+        ORDER BY id DESC
+        """
+    ).fetchall()
+    conn.close()
+    return [_row_to_capture_job(row) for row in rows]
 
 
 def upsert_location(name: str, latitude: float, longitude: float) -> Location:
@@ -253,6 +386,18 @@ def _row_to_location(row: sqlite3.Row) -> Location:
     )
 
 
+def _row_to_capture_job(row: sqlite3.Row) -> CaptureJob:
+    return CaptureJob(
+        id=row["id"],
+        status=row["status"],
+        final_transcript=row["final_transcript"],
+        note_id=row["note_id"],
+        error=row["error"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
 def _row_to_note(row: sqlite3.Row) -> Note:
     def parse_int_list(value: str | None) -> list[int] | None:
         if value is None:
@@ -285,6 +430,8 @@ def _row_to_note(row: sqlite3.Row) -> Note:
         repeat_days=parse_int_list(row["repeat_days"]),
         repeat_months=parse_int_list(row["repeat_months"]),
         repeat_time=row["repeat_time"],
+        estimated_duration_minutes=row["estimated_duration_minutes"],
+        audio_path=row["audio_path"],
     )
 
 
@@ -304,7 +451,9 @@ def get_root_notes(status: NoteStatus | None = None) -> list[Note]:
                notes.parent_note_id, notes.deadline_at, notes.importance_score,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
                notes.location_id, notes.repeat_cycle, notes.repeat_days,
-               notes.repeat_months, notes.repeat_time, locations.name AS location_name,
+               notes.repeat_months, notes.repeat_time,
+               notes.estimated_duration_minutes, notes.audio_path,
+               locations.name AS location_name,
                locations.latitude AS location_latitude,
                locations.longitude AS location_longitude
         FROM notes
@@ -334,7 +483,9 @@ def get_child_notes(parent_note_id: int, status: NoteStatus | None = None) -> li
                notes.parent_note_id, notes.deadline_at, notes.importance_score,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
                notes.location_id, notes.repeat_cycle, notes.repeat_days,
-               notes.repeat_months, notes.repeat_time, locations.name AS location_name,
+               notes.repeat_months, notes.repeat_time,
+               notes.estimated_duration_minutes, notes.audio_path,
+               locations.name AS location_name,
                locations.latitude AS location_latitude,
                locations.longitude AS location_longitude
         FROM notes
@@ -361,7 +512,9 @@ def get_all_notes_flat(status: NoteStatus | None = None) -> list[Note]:
                notes.parent_note_id, notes.deadline_at, notes.importance_score,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
                notes.location_id, notes.repeat_cycle, notes.repeat_days,
-               notes.repeat_months, notes.repeat_time, locations.name AS location_name,
+               notes.repeat_months, notes.repeat_time,
+               notes.estimated_duration_minutes, notes.audio_path,
+               locations.name AS location_name,
                locations.latitude AS location_latitude,
                locations.longitude AS location_longitude
         FROM notes
@@ -387,7 +540,9 @@ def get_note_by_id(note_id: int) -> Note | None:
                notes.parent_note_id, notes.deadline_at, notes.importance_score,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
                notes.location_id, notes.repeat_cycle, notes.repeat_days,
-               notes.repeat_months, notes.repeat_time, locations.name AS location_name,
+               notes.repeat_months, notes.repeat_time,
+               notes.estimated_duration_minutes, notes.audio_path,
+               locations.name AS location_name,
                locations.latitude AS location_latitude,
                locations.longitude AS location_longitude
         FROM notes

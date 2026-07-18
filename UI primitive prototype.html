@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LOCAL-MEM OS Prototype</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at center, #102116 0%, #030604 70%), #030604;
+      color: #8dff8d;
+      font-family: "Courier New", monospace;
+      overflow: hidden;
+    }
+    button, input { font: inherit; }
+    .device {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .shell {
+      width: min(100%, 980px);
+      background: linear-gradient(145deg, #171a16, #090b09);
+      border: 2px solid #333;
+      border-radius: 22px;
+      padding: 22px;
+      box-shadow: 0 30px 80px rgba(0,0,0,.7), inset 0 0 0 2px #080908;
+      display: grid;
+      grid-template-columns: 1fr 92px;
+      gap: 18px;
+    }
+    .screen {
+      aspect-ratio: 5 / 3;
+      min-height: 480px;
+      border: 2px solid #2fff6f;
+      border-radius: 10px;
+      background: linear-gradient(rgba(105,255,105,.04) 50%, transparent 50%), #031008;
+      background-size: 100% 4px;
+      box-shadow: 0 0 35px rgba(47,255,111,.2), inset 0 0 40px rgba(47,255,111,.1);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+    .screen::after {
+      content: "";
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle, transparent 58%, rgba(0,0,0,.5));
+    }
+    .side-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      color: #ffd36a;
+      font-size: 12px;
+    }
+    .round {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: #111;
+      border: 2px solid #444;
+      box-shadow: inset 0 0 12px #000;
+    }
+    .knob {
+      margin-top: auto;
+      width: 70px;
+      height: 70px;
+      border-radius: 50%;
+      border: 2px solid #444;
+      background: repeating-conic-gradient(#171717 0 10deg, #252525 10deg 20deg);
+      box-shadow: inset 0 0 18px #000;
+    }
+    .topbar, .bottombar {
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      padding: 12px 18px;
+      border-color: #1d7f3c;
+    }
+    .topbar { border-bottom: 1px solid #1d7f3c; gap: 18px; }
+    .bottombar {
+      border-top: 1px solid #1d7f3c;
+      justify-content: space-between;
+      color: #c8ff7a;
+      font-size: 13px;
+    }
+    .brand { color: #c8ff7a; white-space: nowrap; }
+    .status { margin-left: auto; color: #c8ff7a; white-space: nowrap; }
+    .tabs { display: flex; gap: 8px; }
+    .tabs button, .command, .chat-input button {
+      background: transparent;
+      color: #8dff8d;
+      border: 1px solid #1d7f3c;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .tabs button.active, .tabs button:hover, .command:hover, .chat-input button:hover {
+      background: rgba(47,255,111,.15);
+      box-shadow: inset 0 0 12px rgba(47,255,111,.2);
+    }
+    .content { z-index: 1; flex: 1; padding: 14px; overflow: hidden; }
+    .grid { height: 100%; display: grid; gap: 14px; }
+    .today-grid { grid-template-columns: 1.1fr 1fr .9fr; }
+    .memory-grid, .chat-grid, .settings-grid { grid-template-columns: 1fr 1fr; }
+    .panel {
+      border: 1px solid #1d7f3c;
+      padding: 14px;
+      overflow: auto;
+      background: rgba(0,25,10,.45);
+    }
+    .panel h1 {
+      margin: 0 0 14px;
+      font-size: 14px;
+      color: #c8ff7a;
+      letter-spacing: 1px;
+    }
+    .date { color: #c8ff7a; margin-bottom: 12px; }
+    .list { display: grid; gap: 10px; }
+    .row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid #185f31;
+      padding: 10px;
+    }
+    .row strong, .memory-item strong { display: block; font-size: 15px; }
+    small { display: block; margin-top: 4px; color: #66c96f; }
+    .check { color: #c8ff7a; }
+    .done { color: #2fff6f; }
+    .tag {
+      font-size: 11px;
+      color: #8dff8d;
+      border: 1px solid #1d7f3c;
+      padding: 3px 6px;
+    }
+    .amber { color: #ffd36a; border-color: #ffd36a; }
+    .timeline { display: grid; gap: 12px; }
+    .time-row { display: grid; grid-template-columns: 58px 1fr; gap: 10px; }
+    .time-row > div {
+      border-left: 2px solid #2fff6f;
+      padding: 8px 10px;
+      background: rgba(47,255,111,.08);
+    }
+    .quote { color: #c8ff7a; line-height: 1.5; }
+    .stats, .status-list { display: grid; gap: 10px; }
+    .stats div, .status-row {
+      border-bottom: 1px solid #185f31;
+      padding: 10px 0;
+      display: flex;
+      justify-content: space-between;
+    }
+    .terminal-input, .chat-input input {
+      width: 100%;
+      background: #020805;
+      border: 1px solid #1d7f3c;
+      color: #8dff8d;
+      padding: 10px;
+      outline: none;
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .chips span { border: 1px solid #185f31; padding: 4px 8px; color: #c8ff7a; }
+    .memory-item {
+      text-align: left;
+      background: transparent;
+      border: 1px solid #185f31;
+      color: #8dff8d;
+      padding: 10px;
+      cursor: pointer;
+    }
+    .memory-item:hover { border-color: #2fff6f; }
+    .memory-item span { color: #ffd36a; font-size: 12px; }
+    .memory-detail h2 { color: #c8ff7a; margin-top: 16px; }
+    .memory-detail p { line-height: 1.6; }
+    .chat-box {
+      height: calc(100% - 52px);
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .message {
+      border: 1px solid #185f31;
+      padding: 10px;
+      max-width: 85%;
+      line-height: 1.45;
+    }
+    .message.user { align-self: flex-end; color: #ffd36a; }
+    .message.ai { align-self: flex-start; }
+    .chat-input { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 10px; }
+    .command { display: block; width: 100%; margin-bottom: 10px; text-align: left; }
+    @media (max-width: 850px) {
+      body { overflow: auto; }
+      .shell { grid-template-columns: 1fr; }
+      .side-controls { display: none; }
+      .screen { aspect-ratio: auto; min-height: 100vh; }
+      .topbar { flex-wrap: wrap; }
+      .today-grid, .memory-grid, .chat-grid, .settings-grid { grid-template-columns: 1fr; }
+      .content { overflow: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useMemo, useState } = React;
+
+    const habits = [
+      { name: "Gym", schedule: "Mon / Wed / Fri", time: "18:00", done: false },
+      { name: "Drink water", schedule: "Daily", time: "All day", done: true },
+      { name: "Learn drawing", schedule: "Daily", time: "20:00", done: false },
+    ];
+
+    const timeline = [
+      { time: "09:00", title: "Review today", type: "task" },
+      { time: "12:00", title: "Drink water", type: "habit" },
+      { time: "18:00", title: "Gym", type: "habit" },
+      { time: "20:00", title: "Learn drawing", type: "habit" },
+    ];
+
+    const memories = [
+      { type: "Idea", title: "AI hardware note device", text: "Offline device that captures voice notes, tasks, ideas, and habits." },
+      { type: "Voice", title: "Game combat thought", text: "Melee lock-on, projectiles mouse aimed, parry follows cursor." },
+      { type: "Task", title: "Buy better microphone", text: "Audio quality is the most important part of the MVP." },
+      { type: "Note", title: "Japanese study", text: "Practice days, months, adjectives, and simple conversation." },
+      { type: "Image", title: "Whiteboard photo", text: "Attached image placeholder for future camera capture." },
+    ];
+
+    function App() {
+      const [tab, setTab] = useState("today");
+      const [query, setQuery] = useState("");
+      const [selectedMemory, setSelectedMemory] = useState(memories[0]);
+      const [chatInput, setChatInput] = useState("");
+
+      const filteredMemories = useMemo(() => {
+        return memories.filter((m) =>
+          m.title.toLowerCase().includes(query.toLowerCase()) ||
+          m.type.toLowerCase().includes(query.toLowerCase()) ||
+          m.text.toLowerCase().includes(query.toLowerCase())
+        );
+      }, [query]);
+
+      return (
+        <main className="device">
+          <div className="shell">
+            <section className="screen">
+              <header className="topbar">
+                <div className="brand">LOCAL-MEM OS</div>
+                <nav className="tabs">
+                  {["today", "memory", "chat", "settings"].map((item) => (
+                    <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>
+                      {item.toUpperCase()}
+                    </button>
+                  ))}
+                </nav>
+                <div className="status">OFFLINE · 92%</div>
+              </header>
+
+              <div className="content">
+                {tab === "today" && (
+                  <div className="grid today-grid">
+                    <Panel title="TODAY">
+                      <div className="date">MONDAY · 02 JULY</div>
+                      <div className="list">
+                        {habits.map((habit) => (
+                          <div className="row" key={habit.name}>
+                            <span className={habit.done ? "check done" : "check"}>{habit.done ? "■" : "□"}</span>
+                            <div>
+                              <strong>{habit.name}</strong>
+                              <small>{habit.schedule} · {habit.time}</small>
+                            </div>
+                            <span className="tag">HABIT</span>
+                          </div>
+                        ))}
+                      </div>
+                    </Panel>
+
+                    <Panel title="TIMETABLE">
+                      <div className="timeline">
+                        {timeline.map((item) => (
+                          <div className="time-row" key={item.time + item.title}>
+                            <span>{item.time}</span>
+                            <div>{item.title}<small>{item.type}</small></div>
+                          </div>
+                        ))}
+                      </div>
+                    </Panel>
+
+                    <Panel title="FOCUS">
+                      <p className="quote">“Capture the thought. Do the next action.”</p>
+                      <div className="stats">
+                        <div><span>Habits</span><strong>1 / 3</strong></div>
+                        <div><span>Notes captured</span><strong>7</strong></div>
+                        <div><span>Focus time</span><strong>2h 15m</strong></div>
+                      </div>
+                    </Panel>
+                  </div>
+                )}
+
+                {tab === "memory" && (
+                  <div className="grid memory-grid">
+                    <Panel title="MEMORY BANK">
+                      <input className="terminal-input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="SEARCH MEMORY..." />
+                      <div className="chips">{["Notes", "Ideas", "Tasks", "Voice", "Images"].map((c) => <span key={c}>{c}</span>)}</div>
+                      <div className="list">
+                        {filteredMemories.map((memory) => (
+                          <button key={memory.title} className="memory-item" onClick={() => setSelectedMemory(memory)}>
+                            <span>{memory.type}</span>
+                            <strong>{memory.title}</strong>
+                          </button>
+                        ))}
+                      </div>
+                    </Panel>
+
+                    <Panel title="DETAIL">
+                      <div className="memory-detail">
+                        <span className="tag amber">{selectedMemory.type}</span>
+                        <h2>{selectedMemory.title}</h2>
+                        <p>{selectedMemory.text}</p>
+                      </div>
+                    </Panel>
+                  </div>
+                )}
+
+                {tab === "chat" && (
+                  <div className="grid chat-grid">
+                    <Panel title="LOCAL AI">
+                      <div className="chat-box">
+                        <div className="message user">What do I have today?</div>
+                        <div className="message ai">Gym at 18:00. Learn drawing at 20:00. Drink water all day.</div>
+                        <div className="message user">Summarize my notes from this week.</div>
+                        <div className="message ai">You focused on the AI device, game combat, Japanese study, and hardware MVP planning.</div>
+                      </div>
+                      <div className="chat-input">
+                        <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="TYPE OR PRESS REC..." />
+                        <button onClick={() => setChatInput("")}>SEND</button>
+                      </div>
+                    </Panel>
+
+                    <Panel title="SUGGESTED COMMANDS">
+                      <button className="command">What do I have today?</button>
+                      <button className="command">Create a habit for drawing daily</button>
+                      <button className="command">Summarize my notes from this week</button>
+                      <button className="command">Find my hardware ideas</button>
+                    </Panel>
+                  </div>
+                )}
+
+                {tab === "settings" && (
+                  <div className="grid settings-grid">
+                    <Panel title="DEVICE STATUS">
+                      <Status label="Offline mode" value="ACTIVE" />
+                      <Status label="Storage used" value="18.4 GB / 128 GB" />
+                      <Status label="Model status" value="LOADED" />
+                      <Status label="Microphone" value="READY" />
+                      <Status label="Battery" value="92%" />
+                    </Panel>
+                    <Panel title="AI CONFIG">
+                      <Status label="Transcription" value="LOCAL WHISPER" />
+                      <Status label="Memory search" value="LOCAL EMBEDDINGS" />
+                      <Status label="Network" value="DISABLED" />
+                      <Status label="Sync" value="OFF" />
+                    </Panel>
+                  </div>
+                )}
+              </div>
+
+              <footer className="bottombar">
+                <span>[NAV]</span><span>[SELECT]</span><span>[BACK]</span><span>[REC]</span>
+              </footer>
+            </section>
+
+            <aside className="side-controls">
+              <div className="round"></div><span>POWER</span>
+              <div className="round"></div><span>HOME</span>
+              <div className="round"></div><span>REC</span>
+              <div className="knob"></div>
+            </aside>
+          </div>
+        </main>
+      );
+    }
+
+    function Panel({ title, children }) {
+      return <section className="panel"><h1>{title}</h1>{children}</section>;
+    }
+
+    function Status({ label, value }) {
+      return <div className="status-row"><span>{label}</span><strong>{value}</strong></div>;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
