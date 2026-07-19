@@ -31,7 +31,6 @@ class CaptureResult(BaseModel):
     created_at: str | None = None
     status: NoteStatus = "active"
     deadline_at: str | None = None
-    importance_score: int = 1
     urgency_score: int = 0
     rank_score: int = 0
     urgency_reason: str | None = None
@@ -64,7 +63,6 @@ class NoteResponse(BaseModel):
     status: NoteStatus
     parent_note_id: int | None = None
     deadline_at: str | None = None
-    importance_score: int
     urgency_score: int
     rank_score: int
     urgency_reason: str | None = None

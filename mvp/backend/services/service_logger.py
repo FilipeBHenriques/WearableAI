@@ -24,7 +24,6 @@ _LOG_ENABLED = os.getenv("SERVICE_LOG_ENABLED", "1").lower() not in {"0", "false
 
 
 class ServiceName(str, Enum):
-    CAPTURE = "capture_service"
     CAPTURE_QUEUE = "capture_queue_service"
     NOTE = "note_service"
     RECORDING = "recording_service"

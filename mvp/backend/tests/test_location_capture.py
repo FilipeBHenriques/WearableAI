@@ -9,7 +9,8 @@ import numpy as np
 import database
 from schemas import CaptureResult
 from services.llm_utils import extract_json_object
-from services import capture_queue_service, capture_service, command_service, location_service, note_service, recurrence_service, urgency_service
+from services import capture_queue_service, command_service, location_service, note_pipeline, note_service, recurrence_service, urgency_service
+from services.gps_service import Coordinates
 
 
 class LocationCaptureTests(unittest.TestCase):
@@ -28,9 +29,12 @@ class LocationCaptureTests(unittest.TestCase):
         )
         with (
             patch.object(command_service, "detect_command", return_value=command),
-            patch.dict("os.environ", {"MOCK_GPS_LAT": "40.1", "MOCK_GPS_LON": "-8.2"}),
+            patch(
+                "services.gps_service.get_current_coordinates",
+                return_value=Coordinates(latitude=40.1, longitude=-8.2),
+            ),
         ):
-            result = capture_service.process_note_text("this is my house")
+            result = note_pipeline.process_text("this is my house")
 
         self.assertFalse(result.saved)
         self.assertTrue(result.command_processed)
@@ -53,7 +57,7 @@ class LocationCaptureTests(unittest.TestCase):
             patch("services.model_service.get_llm_config_status", return_value={"configured": True}),
             patch("services.model_service.generate_llm", return_value='{"location_id":1,"reason":"gym is mentioned"}'),
         ):
-            result = capture_service.process_note_text(
+            result = note_pipeline.process_text(
                 "I need to stretch once I get to the gym"
             )
 
@@ -76,7 +80,7 @@ class LocationCaptureTests(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_empty_text_is_not_saved(self):
-        result = capture_service.process_note_text("   ")
+        result = note_pipeline.process_text("   ")
 
         self.assertFalse(result.saved)
         self.assertFalse(result.command_processed)
@@ -91,7 +95,7 @@ class LocationCaptureTests(unittest.TestCase):
             patch.object(urgency_service, "apply_urgency", side_effect=RuntimeError("urgency failed")),
             patch("services.location_service.apply_location", side_effect=RuntimeError("location failed")),
         ):
-            result = capture_service.process_note_text("Save this thought even if enrichment fails")
+            result = note_pipeline.process_text("Save this thought even if enrichment fails")
 
         self.assertTrue(result.saved)
         self.assertIsNotNone(result.id)
@@ -221,7 +225,7 @@ class LocationCaptureTests(unittest.TestCase):
         note_id, _ = note_service.save("We need to deliver this homework by next Friday.")
         note = note_service.get_by_id(note_id)
 
-        with patch("services.model_service.generate_llm", return_value='{"has_deadline":true,"deadline_at":"2026-07-23T23:59","importance_score":4,"reason":"deadline"}'):
+        with patch("services.model_service.generate_llm", return_value='{"has_deadline":true,"deadline_at":"2026-07-23T23:59","reason":"deadline"}'):
             result = urgency_service.analyze_note(note, datetime.fromisoformat("2026-07-18T15:00:00+01:00"))
 
         self.assertEqual(result.deadline_at, "2026-07-24T23:59")
@@ -230,7 +234,7 @@ class LocationCaptureTests(unittest.TestCase):
         note_id, _ = note_service.save("I need to finish this by next Thursday.")
         note = note_service.get_by_id(note_id)
 
-        with patch("services.model_service.generate_llm", return_value='{"has_deadline":true,"deadline_at":"2026-07-22T23:59","importance_score":3,"reason":"deadline"}'):
+        with patch("services.model_service.generate_llm", return_value='{"has_deadline":true,"deadline_at":"2026-07-22T23:59","reason":"deadline"}'):
             result = urgency_service.analyze_note(note, datetime.fromisoformat("2026-07-18T15:00:00+01:00"))
 
         self.assertEqual(result.deadline_at, "2026-07-23T23:59")

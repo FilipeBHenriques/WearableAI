@@ -12,6 +12,7 @@ import { LocationsDebugPanel } from "../components/LocationsDebugPanel";
 import { NoteAudioPlayer } from "../components/NoteAudioPlayer";
 import { RecordButton } from "../components/RecordButton";
 import { useCaptureJobs } from "../hooks/useCaptureJobs";
+import type { GpsSuggestionPayload } from "../hooks/useCaptureJobs";
 import { UrgencyBadges } from "../components/UrgencyBadges";
 import { useNotes } from "../hooks/useNotes";
 import { useRecording } from "../hooks/useRecording";
@@ -28,11 +29,18 @@ interface TimetableItem {
   type: string;
 }
 
+interface SuggestionItem {
+  note: Note;
+  source: "rank" | "gps";
+  gpsLocationName?: string;
+}
+
 export function HomePage() {
   const { activeNotes, reload } = useNotes();
   const { todayRepeats, reloadRepeats } = useTodayRepeats();
   const [allNotes, setAllNotes] = useState<Note[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
+  const [gpsSuggestions, setGpsSuggestions] = useState<SuggestionItem[]>([]);
   const [screen, setScreen] = useState<Screen>("main");
   const [notesMode, setNotesMode] = useState<NotesMode>("notes");
   const [selectedNoteId, setSelectedNoteId] = useState<number | null>(null);
@@ -41,10 +49,23 @@ export function HomePage() {
   const selectedNote = selectedNoteId == null ? null : flatNotes.find((note) => note.id === selectedNoteId) ?? null;
   const normalNotes = allNotes.filter((note) => !note.is_repeating);
   const goals = flatNotes.filter((note) => note.is_repeating);
-  const suggestions = flatNotes
-    .filter((note) => note.status === "active")
-    .sort(sortByRank)
-    .slice(0, 5);
+  const rankedSuggestions = useMemo(
+    () =>
+      flatNotes
+        .filter((note) => note.status === "active")
+        .sort(sortByRank)
+        .slice(0, 5)
+        .map((note) => ({ note, source: "rank" as const })),
+    [flatNotes],
+  );
+
+  const suggestions = useMemo(() => {
+    const gpsIds = new Set(gpsSuggestions.map((item) => item.note.id));
+    return [
+      ...gpsSuggestions,
+      ...rankedSuggestions.filter((item) => !gpsIds.has(item.note.id)),
+    ].slice(0, 8);
+  }, [gpsSuggestions, rankedSuggestions]);
 
   const timetableItems = useMemo<TimetableItem[]>(() => {
     const repeatItems = todayRepeats
@@ -96,10 +117,48 @@ export function HomePage() {
     [reloadEverything, reloadLocations],
   );
 
+  const handleGpsSuggestions = useCallback((payload: GpsSuggestionPayload) => {
+    const locationName = payload.location?.name;
+    setGpsSuggestions(
+      payload.notes.map((partial) => ({
+        note: {
+          id: partial.id,
+          text: partial.text,
+          category: partial.category,
+          created_at: "",
+          status: partial.status as Note["status"],
+          parent_note_id: null,
+          deadline_at: partial.deadline_at,
+          urgency_score: partial.urgency_score,
+          rank_score: partial.rank_score,
+          urgency_reason: null,
+          location_id: partial.location_id,
+          location_name: partial.location_name,
+          location_latitude: null,
+          location_longitude: null,
+          repeat_cycle: null,
+          repeat_days: null,
+          repeat_months: null,
+          repeat_time: null,
+          is_repeating: false,
+          is_due_today: false,
+          completed_today: false,
+          repeat_display: null,
+          estimated_duration_minutes: null,
+          audio_path: null,
+          audio_url: null,
+        },
+        source: "gps" as const,
+        gpsLocationName: locationName ?? partial.location_name ?? undefined,
+      })),
+    );
+  }, []);
+
   const { jobs: captureJobs, reloadJobs } = useCaptureJobs({
     onJobUpdated: handleJobUpdated,
     onNotesChanged: reloadEverything,
     onLocationsChanged: reloadLocations,
+    onGpsSuggestions: handleGpsSuggestions,
   });
 
   useEffect(() => {
@@ -204,7 +263,7 @@ export function HomePage() {
                 </Panel>
 
                 <Panel title="SUGGESTIONS">
-                  <SuggestionList notes={suggestions} onOpen={openNote} empty="No suggestions yet." />
+                  <SuggestionList items={suggestions} onOpen={openNote} empty="No suggestions yet." />
                 </Panel>
               </div>
             ) : null}
@@ -346,16 +405,33 @@ function TaskRow({
   );
 }
 
-function SuggestionList({ notes, onOpen, empty }: { notes: Note[]; onOpen: (id: number) => void; empty: string }) {
-  if (notes.length === 0) return <p className="empty">{empty}</p>;
+function SuggestionList({
+  items,
+  onOpen,
+  empty,
+}: {
+  items: SuggestionItem[];
+  onOpen: (id: number) => void;
+  empty: string;
+}) {
+  if (items.length === 0) return <p className="empty">{empty}</p>;
 
   return (
     <div className="list">
-      {notes.map((note) => (
-        <button key={note.id} className="suggestion-item" onClick={() => onOpen(note.id)} type="button">
-          <span>{displayCategory(note)}</span>
-          <strong>{note.text}</strong>
-          <small>{note.urgency_reason ?? note.deadline_at ?? note.created_at}</small>
+      {items.map((item) => (
+        <button
+          key={`${item.source}-${item.note.id}`}
+          className="suggestion-item"
+          onClick={() => onOpen(item.note.id)}
+          type="button"
+        >
+          <span>
+            {item.source === "gps"
+              ? `GPS · ${item.gpsLocationName ?? item.note.location_name ?? "nearby"}`
+              : displayCategory(item.note)}
+          </span>
+          <strong>{item.note.text}</strong>
+          <small>{item.note.urgency_reason ?? item.note.deadline_at ?? item.note.created_at}</small>
         </button>
       ))}
     </div>
@@ -515,7 +591,7 @@ function flattenNotes(notes: Note[]): Note[] {
 }
 
 function sortByRank(a: Note, b: Note) {
-  return b.rank_score - a.rank_score || b.importance_score - a.importance_score || b.id - a.id;
+  return b.rank_score - a.rank_score || b.id - a.id;
 }
 
 function categoryClass(category: string) {

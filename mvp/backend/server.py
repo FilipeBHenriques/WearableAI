@@ -11,7 +11,7 @@ from database import init_db
 from paths import ASSETS_DIR, DIST_DIR
 from models import NoteStatus
 from schemas import CaptureJobResponse, LocationResponse, NoteStatusInput, RecordingJobResult, TextInput
-from services import capture_queue_service, capture_service, event_bus, location_service, model_service, note_service, recording_service, recurrence_service
+from services import capture_queue_service, event_bus, gps_service, location_service, model_service, note_pipeline, note_service, recording_service, recurrence_service
 
 app = FastAPI()
 init_db()
@@ -24,6 +24,7 @@ def startup() -> None:
     if ASSETS_DIR.is_dir():
         print(f"[backend] serving /assets from {ASSETS_DIR}")
     model_service.warm_up_all()
+    gps_service.start_background_ticker()
 
 
 if ASSETS_DIR.is_dir():
@@ -65,7 +66,6 @@ def _serialize_note(note, status: NoteStatus | None = None):
         "status": note.status,
         "parent_note_id": note.parent_note_id,
         "deadline_at": note.deadline_at,
-        "importance_score": note.importance_score,
         "urgency_score": note.urgency_score,
         "rank_score": note.rank_score,
         "urgency_reason": note.urgency_reason,
@@ -230,7 +230,7 @@ def api_active_capture_jobs():
 
 @app.post("/api/text")
 def api_text(body: TextInput):
-    return capture_service.process_text(body.text)
+    return note_pipeline.process_text(body.text)
 
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)

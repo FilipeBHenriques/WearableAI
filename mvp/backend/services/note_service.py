@@ -133,16 +133,20 @@ def update_parent(note_id: int, parent_note_id: int | None) -> None:
 def update_urgency(
     note_id: int,
     deadline_at: str | None,
-    importance_score: int,
     urgency_score: int,
     rank_score: int,
     urgency_reason: str | None,
 ) -> None:
-    log_service_step("updating urgency", note_id=note_id, deadline_at=deadline_at, importance_score=importance_score, urgency_score=urgency_score, rank_score=rank_score)
+    log_service_step(
+        "updating urgency",
+        note_id=note_id,
+        deadline_at=deadline_at,
+        urgency_score=urgency_score,
+        rank_score=rank_score,
+    )
     update_note_urgency(
         note_id,
         deadline_at,
-        importance_score,
         urgency_score,
         rank_score,
         urgency_reason,

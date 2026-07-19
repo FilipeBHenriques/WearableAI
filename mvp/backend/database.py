@@ -59,7 +59,7 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_notes_parent_note_id ON notes(parent_note_id)"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_notes_rank ON notes(rank_score DESC, importance_score DESC, deadline_at ASC, id DESC)"
+        "CREATE INDEX IF NOT EXISTS idx_notes_rank ON notes(rank_score DESC, deadline_at ASC, id DESC)"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_notes_location_id ON notes(location_id)"
@@ -158,7 +158,6 @@ def update_note_recurrence(
 def update_note_urgency(
     note_id: int,
     deadline_at: str | None,
-    importance_score: int,
     urgency_score: int,
     rank_score: int,
     urgency_reason: str | None,
@@ -168,13 +167,12 @@ def update_note_urgency(
         """
         UPDATE notes
         SET deadline_at = ?,
-            importance_score = ?,
             urgency_score = ?,
             rank_score = ?,
             urgency_reason = ?
         WHERE id = ?
         """,
-        (deadline_at, importance_score, urgency_score, rank_score, urgency_reason, note_id),
+        (deadline_at, urgency_score, rank_score, urgency_reason, note_id),
     )
     conn.commit()
     conn.close()
@@ -418,7 +416,6 @@ def _row_to_note(row: sqlite3.Row) -> Note:
         status=row["status"],
         parent_note_id=row["parent_note_id"],
         deadline_at=row["deadline_at"],
-        importance_score=row["importance_score"],
         urgency_score=row["urgency_score"],
         rank_score=row["rank_score"],
         urgency_reason=row["urgency_reason"],
@@ -448,7 +445,7 @@ def get_root_notes(status: NoteStatus | None = None) -> list[Note]:
     rows = conn.execute(
         f"""
         SELECT notes.id, notes.text, notes.category, notes.created_at, notes.status,
-               notes.parent_note_id, notes.deadline_at, notes.importance_score,
+               notes.parent_note_id, notes.deadline_at,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
                notes.location_id, notes.repeat_cycle, notes.repeat_days,
                notes.repeat_months, notes.repeat_time,
@@ -460,7 +457,6 @@ def get_root_notes(status: NoteStatus | None = None) -> list[Note]:
         LEFT JOIN locations ON locations.id = notes.location_id
         WHERE parent_note_id IS NULL {status_filter}
         ORDER BY notes.rank_score DESC,
-                 notes.importance_score DESC,
                  CASE WHEN notes.deadline_at IS NULL THEN 1 ELSE 0 END,
                  notes.deadline_at ASC,
                  notes.id DESC
@@ -480,7 +476,7 @@ def get_child_notes(parent_note_id: int, status: NoteStatus | None = None) -> li
     rows = conn.execute(
         f"""
         SELECT notes.id, notes.text, notes.category, notes.created_at, notes.status,
-               notes.parent_note_id, notes.deadline_at, notes.importance_score,
+               notes.parent_note_id, notes.deadline_at,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
                notes.location_id, notes.repeat_cycle, notes.repeat_days,
                notes.repeat_months, notes.repeat_time,
@@ -492,7 +488,6 @@ def get_child_notes(parent_note_id: int, status: NoteStatus | None = None) -> li
         LEFT JOIN locations ON locations.id = notes.location_id
         WHERE parent_note_id = ? {status_filter}
         ORDER BY notes.rank_score DESC,
-                 notes.importance_score DESC,
                  CASE WHEN notes.deadline_at IS NULL THEN 1 ELSE 0 END,
                  notes.deadline_at ASC,
                  notes.id DESC
@@ -509,7 +504,7 @@ def get_all_notes_flat(status: NoteStatus | None = None) -> list[Note]:
     rows = conn.execute(
         f"""
         SELECT notes.id, notes.text, notes.category, notes.created_at, notes.status,
-               notes.parent_note_id, notes.deadline_at, notes.importance_score,
+               notes.parent_note_id, notes.deadline_at,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
                notes.location_id, notes.repeat_cycle, notes.repeat_days,
                notes.repeat_months, notes.repeat_time,
@@ -521,7 +516,6 @@ def get_all_notes_flat(status: NoteStatus | None = None) -> list[Note]:
         LEFT JOIN locations ON locations.id = notes.location_id
         {clause}
         ORDER BY notes.rank_score DESC,
-                 notes.importance_score DESC,
                  CASE WHEN notes.deadline_at IS NULL THEN 1 ELSE 0 END,
                  notes.deadline_at ASC,
                  notes.id DESC
@@ -537,7 +531,7 @@ def get_note_by_id(note_id: int) -> Note | None:
     row = conn.execute(
         """
         SELECT notes.id, notes.text, notes.category, notes.created_at, notes.status,
-               notes.parent_note_id, notes.deadline_at, notes.importance_score,
+               notes.parent_note_id, notes.deadline_at,
                notes.urgency_score, notes.rank_score, notes.urgency_reason,
                notes.location_id, notes.repeat_cycle, notes.repeat_days,
                notes.repeat_months, notes.repeat_time,

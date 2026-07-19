@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchActiveCaptureJobs } from "../api/notesApi";
-import type { CaptureJob } from "../types/note";
+import type { CaptureJob, Note } from "../types/note";
+
+export type GpsSuggestionPayload = {
+  location: {
+    id: number;
+    name: string;
+    latitude: number;
+    longitude: number;
+  } | null;
+  coordinates: { latitude: number; longitude: number };
+  notes: Array<Pick<Note, "id" | "text" | "category" | "location_id" | "location_name" | "urgency_score" | "rank_score" | "deadline_at" | "status">>;
+};
 
 type AppEventHandlers = {
   onJobUpdated?: (job: CaptureJob) => void | Promise<void>;
   onNotesChanged?: () => void | Promise<void>;
   onLocationsChanged?: () => void | Promise<void>;
+  onGpsSuggestions?: (payload: GpsSuggestionPayload) => void | Promise<void>;
 };
 
 const ACTIVE_STATUSES = new Set([
@@ -116,6 +128,15 @@ export function useCaptureJobs(handlers: AppEventHandlers = {}) {
 
       source.addEventListener("locations_changed", () => {
         void handlersRef.current.onLocationsChanged?.();
+      });
+
+      source.addEventListener("gps_suggestions", (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent).data) as GpsSuggestionPayload;
+          void handlersRef.current.onGpsSuggestions?.(payload);
+        } catch {
+          // Ignore malformed payloads.
+        }
       });
 
       source.onerror = () => {

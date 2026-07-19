@@ -19,7 +19,6 @@ export interface Note {
   status: NoteStatus;
   parent_note_id: number | null;
   deadline_at: string | null;
-  importance_score: number;
   urgency_score: number;
   rank_score: number;
   urgency_reason: string | null;
@@ -48,7 +47,6 @@ export interface RecordResult {
   created_at: string | null;
   status: NoteStatus;
   deadline_at: string | null;
-  importance_score: number;
   urgency_score: number;
   rank_score: number;
   urgency_reason: string | null;

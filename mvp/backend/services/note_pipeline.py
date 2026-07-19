@@ -120,7 +120,6 @@ def to_capture_result(ctx: PipelineContext) -> CaptureResult:
         created_at=note.created_at,
         status=note.status,
         deadline_at=note.deadline_at,
-        importance_score=note.importance_score,
         urgency_score=note.urgency_score,
         rank_score=note.rank_score,
         urgency_reason=note.urgency_reason,

@@ -4,7 +4,6 @@ interface Props {
   note: Pick<
     Note,
     | "deadline_at"
-    | "importance_score"
     | "urgency_score"
     | "urgency_reason"
     | "estimated_duration_minutes"
@@ -46,7 +45,6 @@ export function UrgencyBadges({ note }: Props) {
           {formatDuration(note.estimated_duration_minutes)}
         </span>
       ) : null}
-      <span className="urgency-badge">Importance {note.importance_score}</span>
       <span className="urgency-badge">Urgency {note.urgency_score}</span>
       {note.urgency_reason ? (
         <span className="urgency-badge urgency-badge--reason">

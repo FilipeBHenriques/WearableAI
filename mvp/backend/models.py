@@ -25,7 +25,6 @@ class Note:
     status: NoteStatus = "active"
     parent_note_id: int | None = None
     deadline_at: str | None = None
-    importance_score: int = 1
     urgency_score: int = 0
     rank_score: int = 0
     urgency_reason: str | None = None
