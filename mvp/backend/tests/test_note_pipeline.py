@@ -6,10 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import database
-from services import command_service, note_pipeline, note_service, recurrence_service, urgency_service
+from services import command_service, memory_extraction_service, note_pipeline, note_service
 from services.gps_service import Coordinates
 from services.note_pipeline import ENRICH_STEPS, INTAKE_STEPS, PipelineStep
-from services.recurrence_service import RecurrenceResult
 
 
 class NotePipelineTests(unittest.TestCase):
@@ -28,14 +27,7 @@ class NotePipelineTests(unittest.TestCase):
         )
         self.assertEqual(
             [step.id for step in ENRICH_STEPS],
-            [
-                PipelineStep.RELATIONSHIP,
-                PipelineStep.CLASSIFICATION,
-                PipelineStep.URGENCY,
-                PipelineStep.ESTIMATE_DURATION,
-                PipelineStep.LOCATION,
-                PipelineStep.RECURRENCE,
-            ],
+            [PipelineStep.CLASSIFICATION, PipelineStep.ENRICH_LLM],
         )
 
     def test_intake_stops_on_save_location(self):
@@ -57,46 +49,49 @@ class NotePipelineTests(unittest.TestCase):
         self.assertEqual(result.location_name, "studio")
         self.assertEqual(note_service.get_all_flat(), [])
 
-    def test_duration_skipped_without_deadline(self):
-        command = command_service.Command(type=command_service.CommandType.TAKE_NOTE)
-        estimate_calls = []
+    def test_enrich_llm_skipped_when_no_note(self):
+        # apply() should never be invoked with a None note; the step guards on it.
+        with patch.object(memory_extraction_service, "apply") as apply_mock:
+            note_pipeline._step_enrich_llm(note_pipeline.PipelineContext(text="x", note=None))
 
-        with (
-            patch.object(command_service, "detect_command", return_value=command),
-            patch("services.relationship_service.apply_relationship", side_effect=lambda note: note),
-            patch("services.classification_service.classify_text", return_value="Task"),
-            patch.object(
-                urgency_service,
-                "apply_urgency",
-                return_value=urgency_service.UrgencyResult(deadline_at=None, urgency_score=0, rank_score=0),
-            ),
-            patch(
-                "services.estimate_duration_service.apply_estimate",
-                side_effect=lambda note: estimate_calls.append(note.id),
-            ),
-            patch("services.location_service.apply_location", return_value=None),
-            patch("services.recurrence_service.analyze_text", return_value=RecurrenceResult()),
-        ):
-            result = note_pipeline.process_text("buy milk")
-
-        self.assertTrue(result.saved)
-        self.assertEqual(estimate_calls, [])
+        apply_mock.assert_not_called()
 
     def test_enrich_continues_after_step_failure(self):
         command = command_service.Command(type=command_service.CommandType.TAKE_NOTE)
         with (
             patch.object(command_service, "detect_command", return_value=command),
-            patch("services.relationship_service.apply_relationship", side_effect=RuntimeError("boom")),
             patch("services.classification_service.classify_text", return_value="Idea"),
-            patch.object(urgency_service, "apply_urgency", return_value=urgency_service.UrgencyResult()),
-            patch("services.location_service.apply_location", return_value=None),
-            patch("services.recurrence_service.analyze_text", return_value=RecurrenceResult()),
+            patch.object(memory_extraction_service, "apply", side_effect=RuntimeError("boom")),
         ):
             result = note_pipeline.process_text("keep this note")
 
         self.assertTrue(result.saved)
         note = note_service.get_by_id(result.id)
         self.assertEqual(note.category, "Idea")
+
+    def test_new_note_starts_pending_enrichment(self):
+        note_id, _ = note_service.save("a fresh note")
+        self.assertIn(note_id, note_service.get_ids_needing_enrichment())
+
+    def test_successful_enrich_marks_done(self):
+        note_id, _ = note_service.save("a fresh note")
+        with (
+            patch("services.classification_service.classify_text", return_value="Idea"),
+            patch.object(memory_extraction_service, "apply", return_value=None),
+        ):
+            note_pipeline.run_enrich(note_id)
+
+        self.assertNotIn(note_id, note_service.get_ids_needing_enrichment())
+
+    def test_step_failure_marks_failed_for_retry(self):
+        note_id, _ = note_service.save("a fresh note")
+        with (
+            patch("services.classification_service.classify_text", return_value="Idea"),
+            patch.object(memory_extraction_service, "apply", side_effect=RuntimeError("boom")),
+        ):
+            note_pipeline.run_enrich(note_id)
+
+        self.assertIn(note_id, note_service.get_ids_needing_enrichment())
 
 
 if __name__ == "__main__":

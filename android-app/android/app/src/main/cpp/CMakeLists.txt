@@ -1,0 +1,38 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(wearableai LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_library(wearableai SHARED native-lib.cpp)
+target_link_libraries(wearableai PRIVATE android log)
+
+# llama.cpp must provide the shared GGML target: b10067 requires its own newer
+# GGML API, while whisper.cpp is explicitly able to consume a parent GGML target.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(LLAMA_VENDOR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama.cpp")
+if(EXISTS "${LLAMA_VENDOR}/CMakeLists.txt")
+    set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_UI OFF CACHE BOOL "" FORCE)
+    set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${LLAMA_VENDOR}" llama-build EXCLUDE_FROM_ALL)
+    target_link_libraries(wearableai PRIVATE llama)
+    target_compile_definitions(wearableai PRIVATE WEARABLEAI_HAS_LLAMA=1)
+endif()
+
+set(WHISPER_VENDOR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/whisper.cpp")
+if(EXISTS "${WHISPER_VENDOR}/CMakeLists.txt")
+    set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${WHISPER_VENDOR}" whisper-build EXCLUDE_FROM_ALL)
+    target_link_libraries(wearableai PRIVATE whisper)
+    target_compile_definitions(wearableai PRIVATE WEARABLEAI_HAS_WHISPER=1)
+endif()

@@ -2,6 +2,8 @@ import json
 import sqlite3
 from datetime import datetime
 
+import numpy as np
+
 from models import CaptureJob, CaptureJobStatus, Location, Note, NoteStatus
 from paths import DB_PATH
 
@@ -87,6 +89,12 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE notes ADD COLUMN estimated_duration_minutes INTEGER")
     if "audio_path" not in note_columns:
         conn.execute("ALTER TABLE notes ADD COLUMN audio_path TEXT")
+    if "embedding" not in note_columns:
+        conn.execute("ALTER TABLE notes ADD COLUMN embedding BLOB")
+    if "embedding_model" not in note_columns:
+        conn.execute("ALTER TABLE notes ADD COLUMN embedding_model TEXT")
+    if "enrichment_status" not in note_columns:
+        conn.execute("ALTER TABLE notes ADD COLUMN enrichment_status TEXT NOT NULL DEFAULT 'pending'")
 
 
 def save_note(text: str, category: str) -> tuple[int, str]:
@@ -203,6 +211,52 @@ def update_note_location(note_id: int, location_id: int | None) -> None:
     conn.execute("UPDATE notes SET location_id = ? WHERE id = ?", (location_id, note_id))
     conn.commit()
     conn.close()
+
+
+def update_note_embedding(note_id: int, embedding: np.ndarray, model_name: str) -> None:
+    conn = _connect()
+    conn.execute(
+        "UPDATE notes SET embedding = ?, embedding_model = ? WHERE id = ?",
+        (np.asarray(embedding, dtype=np.float32).tobytes(), model_name, note_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_note_enrichment_status(note_id: int, status: str) -> None:
+    conn = _connect()
+    conn.execute("UPDATE notes SET enrichment_status = ? WHERE id = ?", (status, note_id))
+    conn.commit()
+    conn.close()
+
+
+def get_note_ids_needing_enrichment() -> list[int]:
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id FROM notes WHERE enrichment_status IN ('pending', 'failed') ORDER BY id ASC"
+    ).fetchall()
+    conn.close()
+    return [row["id"] for row in rows]
+
+
+def get_embeddings_for_notes(note_ids: list[int], model_name: str) -> dict[int, np.ndarray]:
+    """Returns cached embeddings for the given note ids that were computed with
+    `model_name`. Notes with no embedding, or a stale one from a different model,
+    are simply absent from the result."""
+    if not note_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in note_ids)
+    conn = _connect()
+    rows = conn.execute(
+        f"""
+        SELECT id, embedding
+        FROM notes
+        WHERE id IN ({placeholders}) AND embedding IS NOT NULL AND embedding_model = ?
+        """,
+        (*note_ids, model_name),
+    ).fetchall()
+    conn.close()
+    return {row["id"]: np.frombuffer(row["embedding"], dtype=np.float32) for row in rows}
 
 
 def create_capture_job(status: CaptureJobStatus = "recording") -> CaptureJob:

@@ -1,4 +1,4 @@
-"""Experimental Whisper transcript cleanup (gaps / filler)."""
+"""Experimental transcript cleanup (gaps / filler)."""
 
 from feature_flags import FIXUP_ENABLED
 from services import model_service

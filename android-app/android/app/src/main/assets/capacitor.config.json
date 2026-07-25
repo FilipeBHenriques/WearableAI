@@ -1,0 +1,9 @@
+{
+	"appId": "com.wearableai.local",
+	"appName": "WearableAI",
+	"webDir": "dist",
+	"android": {
+		"allowMixedContent": false,
+		"backgroundColor": "#031008"
+	}
+}

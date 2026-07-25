@@ -14,14 +14,12 @@ from schemas import CaptureResult
 from services import (
     classification_service,
     command_service,
-    estimate_duration_service,
     event_bus,
     gps_service,
     location_service,
+    memory_extraction_service,
     note_service,
     recurrence_service,
-    relationship_service,
-    urgency_service,
 )
 from services.command_service import CommandType
 from services.service_logger import log_service_call, log_service_step
@@ -30,12 +28,8 @@ from services.service_logger import log_service_call, log_service_step
 class PipelineStep(str, Enum):
     DETECT_COMMAND = "detect_command"
     SAVE_NOTE = "save_note"
-    RELATIONSHIP = "relationship"
     CLASSIFICATION = "classification"
-    URGENCY = "urgency"
-    ESTIMATE_DURATION = "estimate_duration"
-    LOCATION = "location"
-    RECURRENCE = "recurrence"
+    ENRICH_LLM = "enrich_llm"
 
 
 class PipelineStage(str, Enum):
@@ -202,14 +196,6 @@ def _step_save_note(ctx: PipelineContext) -> None:
 # --- Enrich ---
 
 
-def _step_relationship(ctx: PipelineContext) -> None:
-    note = _require_note(ctx)
-    if note is None:
-        return
-    ctx.note = relationship_service.apply_relationship(note)
-    _reload_note(ctx)
-
-
 def _step_classification(ctx: PipelineContext) -> None:
     note = _require_note(ctx)
     if note is None:
@@ -220,51 +206,11 @@ def _step_classification(ctx: PipelineContext) -> None:
     _reload_note(ctx)
 
 
-def _step_urgency(ctx: PipelineContext) -> None:
+def _step_enrich_llm(ctx: PipelineContext) -> None:
     note = _require_note(ctx)
     if note is None:
         return
-    urgency_service.apply_urgency(note)
-    _reload_note(ctx)
-
-
-def _step_estimate_duration(ctx: PipelineContext) -> None:
-    note = _require_note(ctx)
-    if note is None or not note.deadline_at:
-        return
-
-    estimate_duration_service.apply_estimate(note)
-    _reload_note(ctx)
-    if ctx.note is not None and ctx.note.estimated_duration_minutes is not None:
-        urgency_service.refresh_scores(ctx.note)
-        _reload_note(ctx)
-
-
-def _step_location(ctx: PipelineContext) -> None:
-    note = _require_note(ctx)
-    if note is None:
-        return
-    location_service.apply_location(note)
-    _reload_note(ctx)
-
-
-def _step_recurrence(ctx: PipelineContext) -> None:
-    note = _require_note(ctx)
-    if note is None:
-        return
-
-    recurrence = recurrence_service.analyze_text(note.text)
-    if recurrence.repeat_cycle is None:
-        return
-
-    note_service.update_recurrence(
-        note.id,
-        recurrence.repeat_cycle,
-        recurrence.repeat_days,
-        recurrence.repeat_months,
-        recurrence.repeat_time,
-    )
-    note_service.update_category(note.id, "Goal")
+    memory_extraction_service.apply(note)
     _reload_note(ctx)
 
 
@@ -274,12 +220,8 @@ INTAKE_STEPS: tuple[Step, ...] = (
 )
 
 ENRICH_STEPS: tuple[Step, ...] = (
-    Step(PipelineStep.RELATIONSHIP, _step_relationship),
     Step(PipelineStep.CLASSIFICATION, _step_classification),
-    Step(PipelineStep.URGENCY, _step_urgency),
-    Step(PipelineStep.ESTIMATE_DURATION, _step_estimate_duration),
-    Step(PipelineStep.LOCATION, _step_location),
-    Step(PipelineStep.RECURRENCE, _step_recurrence),
+    Step(PipelineStep.ENRICH_LLM, _step_enrich_llm),
 )
 
 
@@ -288,10 +230,13 @@ def _run_steps(
     ctx: PipelineContext,
     *,
     error_policy: ErrorPolicy,
-) -> None:
+) -> bool:
+    """Runs steps in order. Returns True if any step failed (only meaningful under
+    ErrorPolicy.CONTINUE — FAIL_FAST steps raise instead of being tracked here)."""
+    any_failed = False
     for step in steps:
         if ctx.stopped:
-            return
+            return any_failed
 
         if error_policy is ErrorPolicy.FAIL_FAST:
             step.run(ctx)
@@ -300,8 +245,10 @@ def _run_steps(
         try:
             step.run(ctx)
         except Exception as exc:
+            any_failed = True
             note_id = ctx.note.id if ctx.note is not None else None
             log_service_step(f"{step.id.value} failed", note_id=note_id, error=repr(exc))
+    return any_failed
 
 
 def _new_context(text: str) -> PipelineContext | None:
@@ -325,18 +272,33 @@ def run_intake(text: str) -> CaptureResult:
 
 @log_service_call
 def run_enrich(note_id: int) -> CaptureResult:
-    """Run enrich steps on an existing note."""
+    """Run enrich steps on an existing note.
+
+    Tracks enrichment_status so a background retry sweep (enrichment_retry_service)
+    can find and re-run notes that failed (e.g. Ollama was down) or were never
+    reached (e.g. process restarted mid-enrichment).
+    """
     note = note_service.get_by_id(note_id)
     if note is None:
         return _empty_result()
 
+    note_service.update_enrichment_status(note_id, "enriching")
     ctx = PipelineContext(
         text=note.text,
         note=note,
         saved=True,
         command_type=CommandType.TAKE_NOTE,
     )
-    _run_steps(ENRICH_STEPS, ctx, error_policy=ErrorPolicy.CONTINUE)
+    try:
+        any_failed = _run_steps(ENRICH_STEPS, ctx, error_policy=ErrorPolicy.CONTINUE)
+    except Exception as exc:
+        log_service_step("enrichment crashed", note_id=note_id, error=repr(exc))
+        note_service.update_enrichment_status(note_id, "failed")
+        _reload_note(ctx)
+        _publish_enriched(note_id)
+        return to_capture_result(ctx)
+
+    note_service.update_enrichment_status(note_id, "failed" if any_failed else "done")
     _reload_note(ctx)
     _publish_enriched(note_id)
     return to_capture_result(ctx)
@@ -353,8 +315,4 @@ def process_text(text: str) -> CaptureResult:
     if ctx.stopped or ctx.note is None:
         return to_capture_result(ctx)
 
-    _run_steps(ENRICH_STEPS, ctx, error_policy=ErrorPolicy.CONTINUE)
-    _reload_note(ctx)
-    if ctx.note is not None:
-        _publish_enriched(ctx.note.id)
-    return to_capture_result(ctx)
+    return run_enrich(ctx.note.id)

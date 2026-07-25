@@ -1,60 +1,13 @@
 """Detects and evaluates repeating notes."""
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 import re
 
 from models import Note, RepeatCycle
-from services import model_service
-from services.llm_utils import extract_json_object
-from services.service_logger import log_service_call, log_service_step
+from services.date_words import MONTH_NAMES, WEEKDAY_NAMES_ISO as WEEKDAY_NAMES
 
 REPEAT_DONE_PREFIX = "repeat_done:"
-WEEKDAY_NAMES = {
-    "monday": 1,
-    "mon": 1,
-    "tuesday": 2,
-    "tue": 2,
-    "tues": 2,
-    "wednesday": 3,
-    "wed": 3,
-    "thursday": 4,
-    "thu": 4,
-    "thur": 4,
-    "thurs": 4,
-    "friday": 5,
-    "fri": 5,
-    "saturday": 6,
-    "sat": 6,
-    "sunday": 7,
-    "sun": 7,
-}
-MONTH_NAMES = {
-    "january": 1,
-    "jan": 1,
-    "february": 2,
-    "feb": 2,
-    "march": 3,
-    "mar": 3,
-    "april": 4,
-    "apr": 4,
-    "may": 5,
-    "june": 6,
-    "jun": 6,
-    "july": 7,
-    "jul": 7,
-    "august": 8,
-    "aug": 8,
-    "september": 9,
-    "sep": 9,
-    "sept": 9,
-    "october": 10,
-    "oct": 10,
-    "november": 11,
-    "nov": 11,
-    "december": 12,
-    "dec": 12,
-}
 
 
 @dataclass
@@ -146,7 +99,7 @@ def _normalize_time(value) -> str | None:
     return f"{hour:02d}:{minute:02d}"
 
 
-def _from_parsed(parsed: dict) -> RecurrenceResult:
+def from_parsed(parsed: dict) -> RecurrenceResult:
     repeats = bool(parsed.get("is_repeating") or parsed.get("repeats"))
     if not repeats:
         return RecurrenceResult()
@@ -185,7 +138,7 @@ def _weekday_numbers(text: str) -> list[int]:
     return sorted({number for name, number in WEEKDAY_NAMES.items() if re.search(rf"\b{name}\b", lowered)})
 
 
-def _has_repeat_signal(text: str) -> bool:
+def has_repeat_signal(text: str) -> bool:
     lowered = text.lower()
     return bool(
         re.search(
@@ -204,10 +157,10 @@ def _looks_like_one_time_deadline(text: str) -> bool:
 
 
 def _should_reject_recurrence(text: str) -> bool:
-    return _looks_like_one_time_deadline(text) and not _has_repeat_signal(text) and len(_weekday_numbers(text)) <= 1
+    return _looks_like_one_time_deadline(text) and not has_repeat_signal(text) and len(_weekday_numbers(text)) <= 1
 
 
-def _heuristic(text: str) -> RecurrenceResult:
+def heuristic_extract(text: str) -> RecurrenceResult:
     if _should_reject_recurrence(text):
         return RecurrenceResult()
 
@@ -221,7 +174,7 @@ def _heuristic(text: str) -> RecurrenceResult:
         return RecurrenceResult("weekly", [1, 2, 3, 4, 5], repeat_time=repeat_time)
 
     week_days = _weekday_numbers(text)
-    if week_days and (_has_repeat_signal(text) or len(week_days) > 1):
+    if week_days and (has_repeat_signal(text) or len(week_days) > 1):
         return RecurrenceResult("weekly", week_days, repeat_time=repeat_time)
 
     monthly_match = re.search(r"\bevery\s+month\s+(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b", lowered)
@@ -235,49 +188,3 @@ def _heuristic(text: str) -> RecurrenceResult:
         return RecurrenceResult("yearly", days, months, repeat_time)
 
     return RecurrenceResult()
-
-
-def _build_prompt(text: str, captured_at: datetime) -> str:
-    return f"""Return one JSON object only. Do not explain.
-
-Detect whether this note is a repeating task/reminder.
-
-Current local date: {captured_at.date().isoformat()}
-
-Shape:
-{{"is_repeating":false,"repeat_cycle":null,"repeat_days":null,"repeat_months":null,"repeat_time":null}}
-
-Rules:
-- repeat_cycle is one of daily, weekly, monthly, yearly, or null.
-- repeat_days must be numbers.
-- For weekly, repeat_days uses Monday=1 through Sunday=7.
-- For monthly, repeat_days uses day-of-month 1-31.
-- For yearly, repeat_months uses 1-12 and repeat_days uses day-of-month 1-31.
-- Daily uses repeat_days null and repeat_months null.
-- repeat_time is HH:MM in 24-hour local time or null.
-- Only mark is_repeating true when the note clearly asks for a repeated action.
-
-Note: {text}
-JSON only:"""
-
-
-@log_service_call
-def analyze_text(text: str, captured_at: datetime | None = None) -> RecurrenceResult:
-    captured_at = captured_at or datetime.now().astimezone()
-    try:
-        raw_text = model_service.generate_llm(
-            _build_prompt(text, captured_at),
-            max_tokens=192,
-            json_mode=True,
-        )
-        parsed = extract_json_object(raw_text)
-        result = _from_parsed(parsed)
-        if result.repeat_cycle is not None and not _should_reject_recurrence(text):
-            log_service_step("llm recurrence selected", result=result)
-            return result
-    except Exception as exc:
-        log_service_step("recurrence llm fallback", error=repr(exc))
-
-    result = _heuristic(text)
-    log_service_step("heuristic recurrence selected", result=result)
-    return result

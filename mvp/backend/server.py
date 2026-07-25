@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import threading
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
@@ -11,7 +12,7 @@ from database import init_db
 from paths import ASSETS_DIR, DIST_DIR
 from models import NoteStatus
 from schemas import CaptureJobResponse, LocationResponse, NoteStatusInput, RecordingJobResult, TextInput
-from services import capture_queue_service, event_bus, gps_service, location_service, model_service, note_pipeline, note_service, recording_service, recurrence_service
+from services import capture_queue_service, enrichment_retry_service, event_bus, gps_service, location_service, model_service, note_pipeline, note_service, recording_service, recurrence_service
 
 app = FastAPI()
 init_db()
@@ -25,6 +26,7 @@ def startup() -> None:
         print(f"[backend] serving /assets from {ASSETS_DIR}")
     model_service.warm_up_all()
     gps_service.start_background_ticker()
+    enrichment_retry_service.start_background_ticker()
 
 
 if ASSETS_DIR.is_dir():
@@ -230,7 +232,16 @@ def api_active_capture_jobs():
 
 @app.post("/api/text")
 def api_text(body: TextInput):
-    return note_pipeline.process_text(body.text)
+    intake_result = note_pipeline.run_intake(body.text)
+    if intake_result.id is not None:
+        event_bus.publish("notes_changed", {"note_id": intake_result.id, "stage": "saved_raw"})
+        threading.Thread(
+            target=note_pipeline.run_enrich,
+            args=(intake_result.id,),
+            daemon=True,
+            name=f"enrich-worker-{intake_result.id}",
+        ).start()
+    return intake_result
 
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)

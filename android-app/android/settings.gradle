@@ -1,0 +1,36 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "WearableAI"
+include(":app")
+
+include(":models-pack")
+
+include(":capacitor-android")
+project(":capacitor-android").projectDir = new File("../node_modules/@capacitor/android/capacitor")
+
+[
+    "capacitor-app": "../node_modules/@capacitor/app/android",
+    "capacitor-filesystem": "../node_modules/@capacitor/filesystem/android",
+    "capacitor-geolocation": "../node_modules/@capacitor/geolocation/android",
+    "capacitor-community-sqlite": "../node_modules/@capacitor-community/sqlite/android"
+].each { name, path ->
+    File moduleDir = file(path)
+    if (moduleDir.exists()) {
+        include(":${name}")
+        project(":${name}").projectDir = moduleDir
+    }
+}

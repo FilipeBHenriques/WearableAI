@@ -24,15 +24,29 @@ def _ask_llm(text: str) -> Command:
     prompt = f"""Return one JSON object only. Do not explain, do not use markdown.
 
 Classify the transcript as one of these commands:
-- save_location: the user is naming the current physical place so GPS coordinates should be saved.
-- take_note: the user is saying content that should become a note.
+- save_location: the user is directly announcing the place they are physically standing in right now, so its GPS coordinates should be saved (e.g. "this is my office", "we are at the gym", "this is the studio").
+- take_note: everything else — reminders, tasks, plans, ideas, or any statement that merely mentions a place without the user declaring they are currently there. This includes the word "save" used in any other sense (saving data, a save system, a save file, saving money, etc.) — that is unrelated to save_location and must be take_note.
 
 JSON shape:
 {{"command":"take_note","location_name":null}}
 
+Examples:
+Transcript: this is my office
+{{"command":"save_location","location_name":"office"}}
+
+Transcript: need to book the venue and order the cake for the party
+{{"command":"take_note","location_name":null}}
+
+Transcript: remind me to call the gym about membership pricing
+{{"command":"take_note","location_name":null}}
+
+Transcript: the save system should store player position and inventory
+{{"command":"take_note","location_name":null}}
+
 Rules:
-- Use save_location only when the user is identifying the current place.
-- Use take_note for reminders, tasks, ideas, or statements to remember.
+- Use save_location ONLY when the transcript is a direct present-tense declaration of the current location ("this is ...", "we are at ...", "I am at ...").
+- If the place is mentioned as part of a task, plan, or reminder (book, call, visit, order, meet at), it is take_note.
+- The word "save" alone does NOT mean save_location — only a location declaration does.
 - If command is save_location, location_name must be the exact short place name from the transcript.
 - If command is take_note, location_name must be null.
 

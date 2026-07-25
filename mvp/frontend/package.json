@@ -6,16 +6,22 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "android:sync": "npm run build && cap sync android",
+    "android:open": "cap open android",
+    "android:run": "npm run android:sync && cap run android",
     "start": "concurrently -k -n backend,frontend -c blue,green \"cd ../backend && python main.py\" \"vite\"",
     "test": "cd ../backend && python run_tests.py",
     "test:backend": "cd ../backend && python run_tests.py"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/core": "^8.4.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.2",
     "concurrently": "^9.0.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

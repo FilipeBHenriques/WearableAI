@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "nativeSources": {
+    "whisper.cpp": {
+      "revision": "v1.9.1",
+      "commit": "f049fff95a089aa9969deb009cdd4892b3e74916",
+      "url": "https://codeload.github.com/ggerganov/whisper.cpp/tar.gz/f049fff95a089aa9969deb009cdd4892b3e74916",
+      "destination": "whisper.cpp"
+    },
+    "llama.cpp": {
+      "revision": "b10067",
+      "commit": "4937ca83f4f3da63004943fe05d8aa4f0217d238",
+      "url": "https://codeload.github.com/ggerganov/llama.cpp/tar.gz/4937ca83f4f3da63004943fe05d8aa4f0217d238",
+      "destination": "llama.cpp"
+    }
+  },
+  "models": {
+    "whisper": {
+      "source": "ggerganov/whisper.cpp",
+      "revision": "f281eb45af861ab5e5297d23694b7d46e090c02c",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-base.en-q5_1.bin",
+      "file": "whisper/ggml-base.en-q5_1.bin",
+      "sha256": "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f",
+      "size": 59721011
+    },
+    "llama": {
+      "source": "bartowski/Qwen2.5-1.5B-Instruct-GGUF",
+      "revision": "ec7a7a1a4d6ff0f562a01d41672912bacd9a56b3",
+      "url": "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/ec7a7a1a4d6ff0f562a01d41672912bacd9a56b3/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+      "file": "llama/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+      "sha256": "1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370",
+      "size": 986048768
+    },
+    "minilm": {
+      "source": "Xenova/all-MiniLM-L6-v2",
+      "revision": "751bff37182d3f1213fa05d7196b954e230abad9",
+      "url": "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/751bff37182d3f1213fa05d7196b954e230abad9/onnx/model_quantized.onnx",
+      "file": "minilm/model_quantized.onnx",
+      "sha256": "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1",
+      "size": 22972370
+    },
+    "tokenizer": {
+      "source": "Xenova/all-MiniLM-L6-v2",
+      "revision": "751bff37182d3f1213fa05d7196b954e230abad9",
+      "blob": "git:fb140275c155a9c7c5a3b3e0e77a9e839594a938",
+      "url": "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/751bff37182d3f1213fa05d7196b954e230abad9/vocab.txt",
+      "file": "minilm/vocab.txt",
+      "sha256": null,
+      "size": 231508
+    }
+  }
+}

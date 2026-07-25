@@ -1,0 +1,14 @@
+/.gradle/
+/.idea/
+/build/
+/local.properties
+**/build/
+*.iml
+.cxx/
+.production-downloads/
+app/src/main/cpp/vendor/*
+!app/src/main/cpp/vendor/.gitkeep
+!app/src/main/cpp/vendor/README.md
+models-pack/src/main/assets/models/*
+!models-pack/src/main/assets/models/.gitkeep
+!models-pack/src/main/assets/models/README.md

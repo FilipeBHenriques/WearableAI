@@ -1,11 +1,9 @@
-"""Owns the microphone stream and Whisper transcription.
+"""Owns the microphone stream and Moonshine transcription.
 
 start_recording() / stop_and_transcribe() are the only public interface.
 Everything else is module-level state that only this file touches.
 """
 
-import os
-import tempfile
 import threading
 from pathlib import Path
 
@@ -19,7 +17,6 @@ from services import model_service
 from services.service_logger import log_service_call, log_service_step
 
 SAMPLE_RATE = 16_000
-WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
 
 _frames: list[np.ndarray] = []
 _stream: sd.InputStream | None = None
@@ -31,20 +28,9 @@ def _transcribe_audio(audio: np.ndarray) -> str:
     if audio.size == 0:
         return ""
 
-    tmp_path = tempfile.mktemp(suffix=".wav")
-    wavfile.write(tmp_path, SAMPLE_RATE, (audio * 32_767).astype(np.int16))
-
-    try:
-        language = None if WHISPER_LANGUAGE.lower() == "auto" else WHISPER_LANGUAGE
-        log_service_step("using whisper transcription", language=language or "auto")
-        segments, _ = model_service.get_whisper_model().transcribe(
-            tmp_path,
-            beam_size=5,
-            language=language,
-        )
-        return " ".join(seg.text for seg in segments).strip()
-    finally:
-        os.unlink(tmp_path)
+    log_service_step("using moonshine transcription")
+    result = model_service.get_transcription_model()({"array": audio, "sampling_rate": SAMPLE_RATE})
+    return str(result.get("text", "")).strip()
 
 
 def resolve_audio_path(relative_path: str) -> Path:

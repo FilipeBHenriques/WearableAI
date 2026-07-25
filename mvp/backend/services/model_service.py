@@ -18,22 +18,34 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("HF_HUB_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-SENTENCE_MODEL_NAME = os.getenv("SENTENCE_MODEL_NAME", "all-MiniLM-L6-v2")
-WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL_NAME", "base")
-WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
-WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+# Benchmarked against all-MiniLM-L6-v2, BAAI/bge-small-en-v1.5, and
+# thenlper/gte-small on note-similarity/location-match pairs; bge-small gave the
+# best true-vs-false separation of the three MTEB-tuned candidates.
+SENTENCE_MODEL_NAME = os.getenv("SENTENCE_MODEL_NAME", "BAAI/bge-small-en-v1.5")
+TRANSCRIPTION_MODEL_NAME = os.getenv("TRANSCRIPTION_MODEL_NAME", "UsefulSensors/moonshine-base")
+TRANSCRIPTION_DEVICE = os.getenv("TRANSCRIPTION_DEVICE", "cpu")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 REQUESTED_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 OLLAMA_HEALTH_TIMEOUT = int(os.getenv("OLLAMA_HEALTH_TIMEOUT", "10"))
 OLLAMA_GENERATE_TIMEOUT = int(os.getenv("OLLAMA_GENERATE_TIMEOUT", "120"))
+# Ollama unloads a model from memory 5m after its last request by default, so
+# occasional callers (relationship tie-break, location match) pay a full reload.
+# Keeping it resident longer trades idle RAM for consistently fast responses.
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+# minicpm5 was tried as the primary model and failed at every structured-decision
+# task tested (command classification hallucinated a fabricated location; the
+# combined memory-extraction prompt renamed/dropped keys and missed an obvious
+# location match). qwen2.5:1.5b-instruct passed every one of the same hard cases
+# — including the full combined extraction prompt — so it's the primary model
+# despite being a comparably small quantized model. See backend/tests/llm_hard_cases.py.
 OLLAMA_MODEL_PREFERENCES = [
-    "llama3:latest",
+    "qwen2.5:1.5b-instruct",
+    "openbmb/minicpm5:latest",
     "mistral:latest",
     "gemma:latest",
     "qwen2.5vl:3b",
     "gemma4:latest",
     "gpt-oss:20b",
-    # test minicpm5-1b
 ]
 
 for logger_name in (
@@ -49,8 +61,8 @@ for logger_name in (
 _sentence_model = None
 _sentence_model_lock = threading.Lock()
 
-_whisper_model = None
-_whisper_model_lock = threading.Lock()
+_transcription_model = None
+_transcription_model_lock = threading.Lock()
 
 ModelLoader = tuple[str, Callable[[], None]]
 
@@ -68,24 +80,23 @@ def get_sentence_model():
 
 
 @log_service_call
-def get_whisper_model():
-    global _whisper_model
-    with _whisper_model_lock:
-        if _whisper_model is None:
+def get_transcription_model():
+    global _transcription_model
+    with _transcription_model_lock:
+        if _transcription_model is None:
             log_service_step(
-                "loading whisper model",
-                model=WHISPER_MODEL_NAME,
-                device=WHISPER_DEVICE,
-                compute_type=WHISPER_COMPUTE_TYPE,
+                "loading transcription model",
+                model=TRANSCRIPTION_MODEL_NAME,
+                device=TRANSCRIPTION_DEVICE,
             )
-            from faster_whisper import WhisperModel
+            from transformers import pipeline
 
-            _whisper_model = WhisperModel(
-                WHISPER_MODEL_NAME,
-                device=WHISPER_DEVICE,
-                compute_type=WHISPER_COMPUTE_TYPE,
+            _transcription_model = pipeline(
+                "automatic-speech-recognition",
+                model=TRANSCRIPTION_MODEL_NAME,
+                device=TRANSCRIPTION_DEVICE,
             )
-    return _whisper_model
+    return _transcription_model
 
 
 def _ollama_json(path: str, payload: dict[str, Any] | None = None, timeout: int = OLLAMA_HEALTH_TIMEOUT) -> dict[str, Any]:
@@ -201,6 +212,7 @@ def generate_llm(prompt: str, max_tokens: int = 8, json_mode: bool = False) -> s
         "model": llm_status["model"],
         "prompt": prompt,
         "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
         "options": {
             "num_predict": max_tokens,
             "temperature": 0,
@@ -224,7 +236,7 @@ def warm_classification_model() -> None:
 
 @log_service_call
 def warm_recording_model() -> None:
-    get_whisper_model()
+    get_transcription_model()
 
 
 @log_service_call

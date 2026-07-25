@@ -1,0 +1,47 @@
+{
+  "name": "wearable-ai-android",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "cap:sync": "npm run build && cap sync android",
+    "cap:open": "cap open android",
+    "cap:run": "npm run cap:sync && cap run android",
+    "android:build": "npm run cap:sync && node scripts/run-gradle.mjs assembleDebug",
+    "prepare:production": "node scripts/prepare-production.mjs",
+    "prepare:production:sources": "node scripts/prepare-production.mjs --sources-only",
+    "prepare:production:models": "node scripts/prepare-production.mjs --models-only",
+    "verify:production": "node scripts/prepare-production.mjs --verify",
+    "release": "npm run cap:sync && (npm run verify:production || npm run prepare:production) && node scripts/run-gradle.mjs assembleSideloadRelease",
+    "android": "node scripts/run-android.mjs",
+    "android:install": "node scripts/run-android.mjs --install-only",
+    "android:release:sideload": "npm run release",
+    "android:release:play": "npm run cap:sync && (npm run verify:production || npm run prepare:production) && node scripts/run-gradle.mjs bundlePlayRelease -PwithPlayAssetPack=true"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/core": "^8.4.2",
+    "@capacitor/filesystem": "^8.0.0",
+    "@capacitor/geolocation": "^8.1.0",
+    "@capacitor-community/sqlite": "^8.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.2",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.4",
+    "vitest": "^3.2.4"
+  }
+}

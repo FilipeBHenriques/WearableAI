@@ -1,0 +1,261 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+}
+
+kotlin {
+    jvmToolchain(21)
+}
+
+def modelAssetsDir = rootProject.file("models-pack/src/main/assets/models")
+def nativeVendorDir = file("src/main/cpp/vendor")
+def productionLockFile = rootProject.file("../packaging/model-lock.json")
+def withPlayAssetPack = providers.gradleProperty("withPlayAssetPack").map { it.toBoolean() }.orElse(false)
+
+android {
+    namespace "com.wearableai.local"
+    compileSdk rootProject.ext.compileSdkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+
+    kotlinOptions {
+        jvmTarget = "21"
+    }
+
+    defaultConfig {
+        applicationId "com.wearableai.local"
+        minSdk rootProject.ext.minSdkVersion
+        targetSdk rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "0.1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField "String", "MODEL_DELIVERY", "\"none\""
+
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17 -O3"
+                arguments "-DANDROID_STL=c++_shared"
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            buildConfigField "boolean", "REQUIRE_PRODUCTION_MODELS", "false"
+        }
+        release {
+            minifyEnabled false
+            buildConfigField "boolean", "REQUIRE_PRODUCTION_MODELS", "true"
+        }
+    }
+
+    flavorDimensions += "distribution"
+    productFlavors {
+        sideload {
+            dimension "distribution"
+            buildConfigField "String", "MODEL_DELIVERY", "\"bundled\""
+        }
+        play {
+            dimension "distribution"
+            buildConfigField "String", "MODEL_DELIVERY", "\"asset-pack\""
+        }
+    }
+
+    sourceSets {
+        // Only this release variant places the canonical models in the base APK.
+        // Debug variants deliberately have no model source directory.
+        sideloadRelease {
+            assets.srcDir(rootProject.file("models-pack/src/main/assets"))
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file("src/main/cpp/CMakeLists.txt")
+            version "3.22.1"
+        }
+    }
+
+    packaging {
+        jniLibs.useLegacyPackaging = false
+        resources.excludes += ["META-INF/DEPENDENCIES", "META-INF/LICENSE*"]
+    }
+
+    androidResources {
+        noCompress += ["bin", "gguf", "onnx"]
+    }
+
+    if (withPlayAssetPack.get()) {
+        assetPacks = [":models-pack"]
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    implementation project(":capacitor-android")
+    if (findProject(":capacitor-app") != null) implementation project(":capacitor-app")
+    if (findProject(":capacitor-filesystem") != null) implementation project(":capacitor-filesystem")
+    if (findProject(":capacitor-geolocation") != null) implementation project(":capacitor-geolocation")
+    if (findProject(":capacitor-community-sqlite") != null) implementation project(":capacitor-community-sqlite")
+
+    implementation "androidx.appcompat:appcompat:${rootProject.ext.androidxAppCompatVersion}"
+    implementation "androidx.core:core-ktx:${rootProject.ext.androidxCoreVersion}"
+    implementation "com.google.android.gms:play-services-location:21.3.0"
+    implementation "com.microsoft.onnxruntime:onnxruntime-android:1.22.0"
+
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20250517"
+    androidTestImplementation "androidx.test.ext:junit:${rootProject.ext.androidxJunitVersion}"
+    androidTestImplementation "androidx.test.espresso:espresso-core:${rootProject.ext.androidxEspressoCoreVersion}"
+}
+
+tasks.register("validateProductionModels") {
+    inputs.dir(modelAssetsDir)
+    inputs.dir(nativeVendorDir)
+    doLast {
+        def manifestFile = new File(modelAssetsDir, "model-manifest.json")
+        if (!manifestFile.isFile()) {
+            throw new GradleException("Prepared model manifest is missing. Run 'npm run prepare:production'.")
+        }
+        def manifest = new groovy.json.JsonSlurper().parse(manifestFile)
+        def productionLock = new groovy.json.JsonSlurper().parse(productionLockFile)
+        if (manifest.models.keySet() != productionLock.models.keySet()) {
+            throw new GradleException("Model manifest entries do not exactly match the packaging lock.")
+        }
+        // Three model families; tokenizer is MiniLM support data, not a fourth model.
+        def requiredArtifacts = ["whisper", "llama", "minilm", "tokenizer"] as Set
+        def requiredDirectories = ["whisper", "llama", "minilm"] as Set
+        def manifestKeys = new HashSet(manifest.models.keySet().collect { it.toString() })
+        def manifestDirectories = new HashSet(manifest.models.values().collect {
+            it.file.toString().tokenize("/")[0]
+        })
+        if (manifest.version != 2) {
+            throw new GradleException("Model manifest version must be 2 (found ${manifest.version}).")
+        }
+        if (manifestKeys != requiredArtifacts) {
+            throw new GradleException(
+                "Manifest keys must be ${requiredArtifacts} (found ${manifestKeys})."
+            )
+        }
+        if (manifestDirectories != requiredDirectories) {
+            throw new GradleException(
+                "Manifest must use exactly three model directories ${requiredDirectories} (found ${manifestDirectories})."
+            )
+        }
+        ["whisper", "llama", "minilm", "tokenizer"].each { key ->
+            def relative = manifest.models[key]?.file
+            def expectedSize = manifest.models[key]?.size
+            def modelFile = relative ? new File(modelAssetsDir, relative) : null
+            def safeParts = relative?.split("/", -1)
+            def safePath = relative &&
+                !relative.contains("\\") &&
+                !relative.contains(":") &&
+                !relative.startsWith("/") &&
+                safeParts.every { it && it != "." && it != ".." } &&
+                modelFile?.canonicalPath?.startsWith(modelAssetsDir.canonicalPath + File.separator)
+            if (!safePath || !modelFile.isFile()) {
+                throw new GradleException("Production model asset '${key}' is missing.")
+            }
+            if (!(expectedSize instanceof Number) || modelFile.length() != expectedSize.longValue()) {
+                throw new GradleException("Production model asset '${key}' size does not match.")
+            }
+            def checksum = manifest.models[key]?.sha256
+            if (!(checksum ==~ /[0-9a-fA-F]{64}/)) {
+                throw new GradleException("Production model asset '${key}' needs a SHA-256 checksum.")
+            }
+            def locked = productionLock.models[key]
+            if (locked.file != relative ||
+                locked.revision != manifest.models[key]?.revision ||
+                (locked.blob != null && locked.blob != manifest.models[key]?.blob) ||
+                (locked.size != null && locked.size.longValue() != expectedSize.longValue()) ||
+                (locked.sha256 != null && locked.sha256.toLowerCase() != checksum.toLowerCase())) {
+                throw new GradleException("Production model asset '${key}' does not match the packaging lock.")
+            }
+            def digest = java.security.MessageDigest.getInstance("SHA-256")
+            def blobDigest = java.security.MessageDigest.getInstance("SHA-1")
+            blobDigest.update(
+                "blob ${modelFile.length()}\u0000".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            )
+            modelFile.withInputStream { stream ->
+                byte[] buffer = new byte[65536]
+                int count
+                while ((count = stream.read(buffer)) != -1) {
+                    digest.update(buffer, 0, count)
+                    blobDigest.update(buffer, 0, count)
+                }
+            }
+            if (digest.digest().encodeHex().toString() != checksum.toLowerCase()) {
+                throw new GradleException("Production model asset '${key}' checksum does not match.")
+            }
+            if (locked.blob != null &&
+                locked.blob != "git:${blobDigest.digest().encodeHex().toString()}") {
+                throw new GradleException("Production model asset '${key}' Git blob hash does not match.")
+            }
+        }
+        def expectedModelFiles = productionLock.models.values().collect { it.file } as Set
+        def packagedModelFiles = fileTree(modelAssetsDir).files.collect {
+            modelAssetsDir.toPath().relativize(it.toPath()).toString().replace("\\", "/")
+        }.findAll { !(it in ["model-manifest.json", "README.md", ".gitkeep"]) } as Set
+        if (packagedModelFiles != expectedModelFiles) {
+            throw new GradleException("Prepared model directory contains unexpected or missing assets.")
+        }
+        productionLock.nativeSources.each { directory, expected ->
+            def tree = new File(nativeVendorDir, directory)
+            def receiptFile = new File(tree, ".wearableai-source.json")
+            if (!new File(tree, "CMakeLists.txt").isFile() || !receiptFile.isFile()) {
+                throw new GradleException("Prepared ${directory} source is required for release.")
+            }
+            def receipt = new groovy.json.JsonSlurper().parse(receiptFile)
+            if (receipt.revision != expected.revision ||
+                receipt.commit != expected.commit ||
+                receipt.url != expected.url ||
+                (expected.archiveSha256 != null &&
+                    receipt.archiveSha256 != expected.archiveSha256)) {
+                throw new GradleException("${directory} revision does not match the packaging lock.")
+            }
+            // Full tree digests are verified by prepare-production.mjs when the receipt
+            // is written. Gradle only re-checks pinned metadata and CMakeLists here so
+            // Windows path/file-tree differences cannot falsely fail release builds.
+            if (!(receipt.treeSha256 ==~ /[0-9a-fA-F]{64}/) ||
+                !(receipt.treeFileCount instanceof Number) ||
+                receipt.treeFileCount.intValue() <= 0) {
+                throw new GradleException("${directory} source receipt is incomplete.")
+            }
+        }
+    }
+}
+
+tasks.configureEach { task ->
+    if (task.name in ["preSideloadReleaseBuild", "prePlayReleaseBuild"]) {
+        task.dependsOn("validateProductionModels")
+    }
+    if (task.name == "bundlePlayRelease") {
+        doFirst {
+            if (!withPlayAssetPack.get()) {
+                throw new GradleException(
+                    "Play release requires -PwithPlayAssetPack=true so models are delivered install-time."
+                )
+            }
+        }
+    }
+    if (task.name == "assemblePlayRelease") {
+        doFirst {
+            throw new GradleException(
+                "playRelease is an AAB-only distribution; use bundlePlayRelease with the asset pack."
+            )
+        }
+    }
+}

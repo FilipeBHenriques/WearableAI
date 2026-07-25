@@ -1,45 +1,14 @@
-"""Estimate duration and command service corner cases."""
+"""Command service corner cases.
 
-import tempfile
-import unittest
-from pathlib import Path
+Duration-estimate LLM behavior now lives in memory_extraction_service
+(see test_memory_extraction_service.py); estimate_duration_service only holds the
+pure clamp_minutes helper now.
+"""
+
 from unittest.mock import patch
+import unittest
 
-import database
-from services import command_service, estimate_duration_service, note_service
-
-
-class EstimateDurationTests(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        database.DB_PATH = Path(self.temp_dir.name) / "test.db"
-        database.init_db()
-
-    def tearDown(self):
-        self.temp_dir.cleanup()
-
-    def test_stores_llm_estimate(self):
-        note_id, _ = note_service.save("write a short email")
-        note = note_service.get_by_id(note_id)
-        with patch(
-            "services.model_service.generate_llm",
-            return_value='{"estimated_duration_minutes":12,"reason":"quick email"}',
-        ):
-            result = estimate_duration_service.apply_estimate(note)
-
-        self.assertEqual(result.estimated_duration_minutes, 12)
-        refreshed = note_service.get_by_id(note_id)
-        self.assertEqual(refreshed.estimated_duration_minutes, 12)
-
-    def test_failure_leaves_duration_unset(self):
-        note_id, _ = note_service.save("ambiguous task")
-        note = note_service.get_by_id(note_id)
-        with patch("services.model_service.generate_llm", side_effect=RuntimeError("down")):
-            result = estimate_duration_service.apply_estimate(note)
-
-        self.assertIsNone(result.estimated_duration_minutes)
-        refreshed = note_service.get_by_id(note_id)
-        self.assertIsNone(refreshed.estimated_duration_minutes)
+from services import command_service
 
 
 class CommandServiceTests(unittest.TestCase):

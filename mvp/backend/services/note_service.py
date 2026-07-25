@@ -10,10 +10,12 @@ from database import (
     get_child_notes,
     get_all_notes_flat,
     get_note_by_id,
+    get_note_ids_needing_enrichment,
     get_root_notes,
     save_note,
     update_note_audio_path,
     update_note_category,
+    update_note_enrichment_status,
     update_note_estimated_duration,
     update_note_recurrence,
     update_note_urgency,
@@ -167,6 +169,19 @@ def update_estimated_duration(note_id: int, estimated_duration_minutes: int | No
 def update_audio_path(note_id: int, audio_path: str | None) -> None:
     log_service_step("updating audio path", note_id=note_id, audio_path=audio_path)
     update_note_audio_path(note_id, audio_path)
+
+
+@log_service_call
+def update_enrichment_status(note_id: int, status: str) -> None:
+    log_service_step("updating enrichment status", note_id=note_id, status=status)
+    update_note_enrichment_status(note_id, status)
+
+
+@log_service_call
+def get_ids_needing_enrichment() -> list[int]:
+    note_ids = get_note_ids_needing_enrichment()
+    log_service_step("loaded notes needing enrichment", count=len(note_ids))
+    return note_ids
 
 
 def _descendant_ids(note_id: int) -> list[int]:

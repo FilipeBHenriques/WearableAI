@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,7 +8,7 @@ import numpy as np
 import database
 from schemas import CaptureResult
 from services.llm_utils import extract_json_object
-from services import capture_queue_service, command_service, location_service, note_pipeline, note_service, recurrence_service, urgency_service
+from services import capture_queue_service, command_service, location_service, memory_extraction_service, note_pipeline, note_service, recurrence_service
 from services.gps_service import Coordinates
 
 
@@ -50,11 +49,8 @@ class LocationCaptureTests(unittest.TestCase):
 
         with (
             patch.object(command_service, "detect_command", return_value=command),
-            patch("services.relationship_service.apply_relationship", side_effect=lambda note: note),
             patch("services.classification_service.classify_text", return_value="Task"),
-            patch.object(urgency_service, "apply_urgency", return_value=urgency_service.UrgencyResult()),
             patch("services.location_service._rank_location_candidates", return_value=[(location_service.get_locations()[0], 0.42)]),
-            patch("services.model_service.get_llm_config_status", return_value={"configured": True}),
             patch("services.model_service.generate_llm", return_value='{"location_id":1,"reason":"gym is mentioned"}'),
         ):
             result = note_pipeline.process_text(
@@ -70,14 +66,17 @@ class LocationCaptureTests(unittest.TestCase):
 
     def test_location_service_skips_link_when_llm_unavailable(self):
         location = location_service.save_current_location("gym", 40.1, -8.2)
+        note_id, _ = note_service.save("stretch at the gym")
+        note = note_service.get_by_id(note_id)
 
         with (
             patch("services.location_service._rank_location_candidates", return_value=[(location, 0.95)]),
-            patch("services.model_service.get_llm_config_status", return_value={"configured": False, "error": "no llm"}),
+            patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")),
         ):
-            result = location_service.find_relevant_location("stretch at the gym")
+            memory_extraction_service.apply(note)
 
-        self.assertIsNone(result)
+        refreshed = note_service.get_by_id(note_id)
+        self.assertIsNone(refreshed.location_id)
 
     def test_empty_text_is_not_saved(self):
         result = note_pipeline.process_text("   ")
@@ -90,10 +89,8 @@ class LocationCaptureTests(unittest.TestCase):
         command = command_service.Command(type=command_service.CommandType.TAKE_NOTE)
         with (
             patch.object(command_service, "detect_command", return_value=command),
-            patch("services.relationship_service.apply_relationship", side_effect=RuntimeError("relationship failed")),
             patch("services.classification_service.classify_text", side_effect=RuntimeError("classification failed")),
-            patch.object(urgency_service, "apply_urgency", side_effect=RuntimeError("urgency failed")),
-            patch("services.location_service.apply_location", side_effect=RuntimeError("location failed")),
+            patch.object(memory_extraction_service, "apply", side_effect=RuntimeError("memory extraction failed")),
         ):
             result = note_pipeline.process_text("Save this thought even if enrichment fails")
 
@@ -177,8 +174,7 @@ class LocationCaptureTests(unittest.TestCase):
         note = note_service.get_by_id(note_id)
         self.assertIsNotNone(note)
 
-        with patch("services.location_service.find_relevant_location", return_value=location):
-            location_service.apply_location(note)
+        location_service.attach_location(note, location)
         linked_note = note_service.get_by_id(note_id)
         self.assertEqual(linked_note.location_id, location.id)
 
@@ -194,61 +190,32 @@ class LocationCaptureTests(unittest.TestCase):
             {"command": "save_location", "location_name": "gym"},
         )
 
-    def test_recurrence_fallback_detects_daily_repeat(self):
-        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
-            result = recurrence_service.analyze_text("drink water every day")
+    def test_recurrence_heuristic_detects_daily_repeat(self):
+        result = recurrence_service.heuristic_extract("drink water every day")
 
         self.assertEqual(result.repeat_cycle, "daily")
         self.assertIsNone(result.repeat_days)
 
-    def test_recurrence_fallback_detects_weekly_repeat_with_time(self):
-        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
-            result = recurrence_service.analyze_text("go to the gym monday wednesday friday at 18")
+    def test_recurrence_heuristic_detects_weekly_repeat_with_time(self):
+        result = recurrence_service.heuristic_extract("go to the gym monday wednesday friday at 18")
 
         self.assertEqual(result.repeat_cycle, "weekly")
         self.assertEqual(result.repeat_days, [1, 3, 5])
         self.assertEqual(result.repeat_time, "18:00")
 
-    def test_recurrence_rejects_one_time_next_week_deadline(self):
-        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
-            result = recurrence_service.analyze_text("We need to deliver this homework by next Friday.")
+    def test_recurrence_heuristic_rejects_one_time_next_week_deadline(self):
+        result = recurrence_service.heuristic_extract("We need to deliver this homework by next Friday.")
 
         self.assertIsNone(result.repeat_cycle)
 
-    def test_recurrence_rejects_bad_llm_repeat_for_one_time_deadline(self):
-        with patch("services.model_service.generate_llm", return_value='{"is_repeating":true,"repeat_cycle":"daily","repeat_days":null,"repeat_months":null,"repeat_time":null}'):
-            result = recurrence_service.analyze_text("I need to finish this by next Thursday.")
-
-        self.assertIsNone(result.repeat_cycle)
-
-    def test_urgency_corrects_next_weekday_deadlines(self):
-        note_id, _ = note_service.save("We need to deliver this homework by next Friday.")
-        note = note_service.get_by_id(note_id)
-
-        with patch("services.model_service.generate_llm", return_value='{"has_deadline":true,"deadline_at":"2026-07-23T23:59","reason":"deadline"}'):
-            result = urgency_service.analyze_note(note, datetime.fromisoformat("2026-07-18T15:00:00+01:00"))
-
-        self.assertEqual(result.deadline_at, "2026-07-24T23:59")
-
-    def test_urgency_corrects_next_thursday_deadline(self):
-        note_id, _ = note_service.save("I need to finish this by next Thursday.")
-        note = note_service.get_by_id(note_id)
-
-        with patch("services.model_service.generate_llm", return_value='{"has_deadline":true,"deadline_at":"2026-07-22T23:59","reason":"deadline"}'):
-            result = urgency_service.analyze_note(note, datetime.fromisoformat("2026-07-18T15:00:00+01:00"))
-
-        self.assertEqual(result.deadline_at, "2026-07-23T23:59")
-
-    def test_recurrence_fallback_detects_monthly_repeat(self):
-        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
-            result = recurrence_service.analyze_text("pay rent every month on the 1st")
+    def test_recurrence_heuristic_detects_monthly_repeat(self):
+        result = recurrence_service.heuristic_extract("pay rent every month on the 1st")
 
         self.assertEqual(result.repeat_cycle, "monthly")
         self.assertEqual(result.repeat_days, [1])
 
-    def test_recurrence_fallback_detects_yearly_repeat(self):
-        with patch("services.model_service.generate_llm", side_effect=RuntimeError("no llm")):
-            result = recurrence_service.analyze_text("renew passport every year on July 2")
+    def test_recurrence_heuristic_detects_yearly_repeat(self):
+        result = recurrence_service.heuristic_extract("renew passport every year on July 2")
 
         self.assertEqual(result.repeat_cycle, "yearly")
         self.assertEqual(result.repeat_days, [2])

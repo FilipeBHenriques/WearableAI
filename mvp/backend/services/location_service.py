@@ -1,11 +1,15 @@
-"""Stores named places and links notes to relevant places."""
+"""Stores named places and links notes to relevant places.
+
+Candidate ranking here is embedding-only. Picking a candidate (when the LLM
+tie-break is needed) is folded into services.memory_extraction_service's single
+consolidated per-note LLM call.
+"""
 
 import numpy as np
 
 from database import delete_location, get_all_locations, update_note_location, upsert_location
 from models import Location, Note
 from services import event_bus, model_service
-from services.llm_utils import extract_json_object
 from services.service_logger import log_service_call, log_service_step
 
 _LOCATION_CONTEXT_PHRASES = [
@@ -20,6 +24,15 @@ _LOCATION_CONTEXT_PHRASES = [
 
 _MAX_LLM_CANDIDATES = 5
 _context_embeddings = None
+
+# Per-location cache of that location's phrase embeddings (e.g. "at gym", "near
+# gym", ...). Keyed by location id; invalidated whenever that location's name
+# changes or it is deleted, since the phrases are derived from the name.
+_location_phrase_embeddings: dict[int, np.ndarray] = {}
+
+
+def _invalidate_location_cache(location_id: int) -> None:
+    _location_phrase_embeddings.pop(location_id, None)
 
 
 def _cosine_similarity(a, b) -> float:
@@ -41,6 +54,7 @@ def save_current_location(name: str, latitude: float, longitude: float) -> Locat
         longitude=longitude,
     )
     location = upsert_location(location_name, latitude, longitude)
+    _invalidate_location_cache(location.id)
     event_bus.publish("locations_changed", {"location_id": location.id})
     return location
 
@@ -57,14 +71,13 @@ def delete_saved_location(location_id: int) -> bool:
     deleted = delete_location(location_id)
     log_service_step("deleted location", location_id=location_id, deleted=deleted)
     if deleted:
+        _invalidate_location_cache(location_id)
         event_bus.publish("locations_changed", {"location_id": location_id})
         event_bus.publish("notes_changed", {"reason": "location_deleted"})
     return deleted
 
 
-@log_service_call
-def apply_location(note: Note) -> Location | None:
-    location = find_relevant_location(note.text)
+def attach_location(note: Note, location: Location | None) -> Location | None:
     if location is None:
         log_service_step("no location matched", note_id=note.id)
         return None
@@ -84,26 +97,30 @@ def apply_location(note: Note) -> Location | None:
 
 
 @log_service_call
-def find_relevant_location(text: str) -> Location | None:
+def location_candidates(text: str) -> list[tuple[Location, float]]:
+    """Embedding-ranked candidate locations (top matches by phrase similarity),
+    or [] when there are no saved locations. Picking among them (when the LLM
+    tie-break is needed) is done by memory_extraction_service."""
     locations = get_all_locations()
     log_service_step("loaded saved locations for matching", count=len(locations))
     if not locations:
-        return None
+        return []
+    return _rank_location_candidates(text, locations)
 
-    candidates = _rank_location_candidates(text, locations)
-    if not candidates:
-        return None
 
-    llm_status = model_service.get_llm_config_status()
-    if not llm_status["configured"]:
-        log_service_step("llm unavailable; skipping location link", error=llm_status.get("error"))
+def resolve_location(candidates: list[tuple[Location, float]], parsed_location_id) -> Location | None:
+    """Turns a parsed `location_id` value from the consolidated LLM response
+    into the matching candidate Location, or None."""
+    if parsed_location_id is None:
         return None
-
     try:
-        return _ask_llm_to_choose_location(text, candidates)
-    except Exception as exc:
-        log_service_step("llm location match failed", error=repr(exc))
+        selected_id = int(parsed_location_id)
+    except (TypeError, ValueError):
         return None
+    for location, _score in candidates:
+        if location.id == selected_id:
+            return location
+    return None
 
 
 @log_service_call
@@ -115,35 +132,35 @@ def warm_up() -> None:
     _get_context_embeddings()
 
 
+def _phrase_embeddings_for(location: Location, model) -> np.ndarray:
+    cached = _location_phrase_embeddings.get(location.id)
+    if cached is not None:
+        return cached
+    embeddings = np.asarray(model.encode(_phrases_for_location(location.name)))
+    _location_phrase_embeddings[location.id] = embeddings
+    return embeddings
+
+
 def _rank_location_candidates(text: str, locations: list[Location]) -> list[tuple[Location, float]]:
-    model = model_service.get_sentence_model()
-    text_embedding = model.encode(text)
-    location_phrases = [
-        phrase
-        for location in locations
-        for phrase in _phrases_for_location(location.name)
-    ]
-    if not location_phrases:
+    if not locations:
         return []
 
-    phrase_embeddings = model.encode(location_phrases)
-    scored = [
-        (index, _cosine_similarity(text_embedding, embedding))
-        for index, embedding in enumerate(phrase_embeddings)
-    ]
-    phrases_per_location = len(_LOCATION_CONTEXT_PHRASES)
+    model = model_service.get_sentence_model()
+    text_embedding = model.encode(text)
+
     best_by_location: dict[int, float] = {}
-    for phrase_index, score in scored:
-        location_index = phrase_index // phrases_per_location
-        best_by_location[location_index] = max(
-            best_by_location.get(location_index, 0.0),
-            score,
+    for location in locations:
+        phrase_embeddings = _phrase_embeddings_for(location, model)
+        best_by_location[location.id] = max(
+            (_cosine_similarity(text_embedding, embedding) for embedding in phrase_embeddings),
+            default=0.0,
         )
 
+    location_by_id = {location.id: location for location in locations}
     ranked = sorted(
         (
-            (locations[location_index], score)
-            for location_index, score in best_by_location.items()
+            (location_by_id[location_id], score)
+            for location_id, score in best_by_location.items()
         ),
         key=lambda item: item[1],
         reverse=True,
@@ -153,50 +170,6 @@ def _rank_location_candidates(text: str, locations: list[Location]) -> list[tupl
         candidates=[{"id": location.id, "name": location.name, "score": score} for location, score in ranked],
     )
     return ranked
-
-
-def _ask_llm_to_choose_location(
-    text: str,
-    candidates: list[tuple[Location, float]],
-) -> Location | None:
-    candidate_lines = "\n".join(
-        f"- id: {location.id}, name: {location.name}, embedding_score: {score:.3f}"
-        for location, score in candidates
-    )
-    log_service_step("using llm location selection", candidates=len(candidates))
-    prompt = f"""Return one JSON object only. Do not explain, do not use markdown.
-
-Choose whether this note should be attached to one saved location.
-
-JSON shape:
-{{"location_id":null,"reason":"short reason"}}
-
-Rules:
-- Choose a location only if the note clearly refers to that place by name, context, or natural wording.
-- If no saved location is relevant, return location_id as null.
-- location_id must be one of the candidate ids or null.
-
-Note: {text}
-Saved location candidates:
-{candidate_lines}
-JSON:"""
-    raw_text = model_service.generate_llm(prompt, max_tokens=160, json_mode=True)
-    parsed = extract_json_object(raw_text)
-    selected_id = parsed.get("location_id")
-    reason = str(parsed.get("reason") or "").strip() or None
-    log_service_step("llm selected location", location_id=selected_id, reason=reason)
-    if selected_id is None:
-        return None
-
-    try:
-        selected_id = int(selected_id)
-    except (TypeError, ValueError):
-        return None
-
-    for location, _score in candidates:
-        if location.id == selected_id:
-            return location
-    return None
 
 
 def _phrases_for_location(location_name: str) -> list[str]:
